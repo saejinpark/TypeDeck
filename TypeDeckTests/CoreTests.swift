@@ -43,8 +43,8 @@ struct CoreTests {
 
     @Test func revealAndSkipCountAsMisses() {
         let s = Session(cards: [Card("a", "1"), Card("b", "2")], shuffle: false)
-        #expect(s.submit() == .reveal)
-        #expect(s.submit() == .shake)
+        #expect(s.submit(at: 0) == .reveal)
+        #expect(s.submit(at: 0) == .shake)
         #expect(s.input("1", composing: false, at: 1))
         s.skip(at: 2)
         #expect(s.accuracy == 0)
@@ -91,6 +91,9 @@ struct CoreTests {
         let file = try JSONDecoder().decode(DeckFile.self, from: Data(contentsOf: url))
         #expect(file.decks.count >= 6)
         #expect(file.decks.allSatisfy { !$0.cards.isEmpty })
+        let toeic = file.decks.filter { $0.id.hasPrefix("toeic-") }.flatMap(\.cards)
+        #expect(toeic.count > 2500)
+        #expect(Set(toeic.map { $0.key.lowercased() }).count == toeic.count)
     }
 
     @Test func parseCardsDetailedCountsSkippedLines() {
@@ -164,11 +167,15 @@ struct ChoiceAndSeedTests {
     }
 
     @Test func migrationReplacesRetiredDecksOnce() {
-        let seed = [Deck(id: "toeic-1", name: "T", category: "토익", cards: [Card("a", "1")])]
+        let seed = [Deck(id: "toeic-basic-01", name: "T", category: "토익", cards: [Card("a", "1")]),
+                    Deck(id: "toefl-1", name: "F", cards: [Card("b", "2")])]
         let old = [Deck(id: "proverbs", name: "P", cards: []), Deck(id: "mine", name: "M", cards: [Card("x", "y")])]
         let next = Seed.migrate(old, from: 1, seed: seed)
-        #expect(next.map(\.id) == ["toeic-1", "mine"])
+        #expect(next.map(\.id) == ["toeic-basic-01", "toefl-1", "mine"])
         #expect(Seed.migrate(next, from: Seed.version, seed: seed) == next)
+        let v2 = [Deck(id: "toeic-1", name: "old", cards: []), Deck(id: "toefl-1", name: "edited", cards: []),
+                  Deck(id: "mine", name: "M", cards: [])]
+        #expect(Seed.migrate(v2, from: 2, seed: seed).map(\.name) == ["T", "edited", "M"])
     }
 
     @Test func groupingKeepsOrderAndPutsUncategorizedLast() {
@@ -197,5 +204,53 @@ struct PDFChunkTests {
     @Test func veryLongLinesAreCut() {
         let chunks = PDFTextExtractor.chunks(String(repeating: "가", count: 250), limit: 100)
         #expect(chunks.map(\.count) == [100, 100, 50])
+    }
+}
+
+struct MultipleMeaningTests {
+    @Test func alternativesSplitOnCommasButKeepNumbers() {
+        #expect(Core.alternatives("지원하다, 신청하다") == ["지원하다", "신청하다"])
+        #expect(Core.alternatives("지원하다,신청하다 ,") == ["지원하다", "신청하다"])
+        #expect(Core.alternatives("1,000") == ["1,000"])
+        #expect(Core.alternatives("apply") == ["apply"])
+        #expect(Core.pickTarget(["지원하다", "신청하다"], typed: "신") == "신청하다")
+        #expect(Core.pickTarget(["지원하다", "신청하다"], typed: "") == "지원하다")
+    }
+
+    @Test func anyMeaningCompletesTheCard() {
+        let s = Session(cards: [Card("apply", "지원하다, 신청하다"), Card("hire", "고용하다")], shuffle: false)
+        #expect(!s.input("신청", composing: false, at: 0))
+        #expect(s.target == "신청하다")
+        #expect(!s.hadError)
+        #expect(s.input("신청하다", composing: false, at: 10))
+        #expect(s.current?.q == "hire")
+        #expect(s.streak == 1)
+    }
+
+    @Test func meaningThatStartsALongerOneWaitsForReturn() {
+        let s = Session(cards: [Card("a", "지원, 지원하다"), Card("b", "x")], shuffle: false)
+        #expect(!s.input("지원", composing: false, at: 0))
+        #expect(s.submit(at: 5) == .advance)
+        #expect(s.current?.q == "b")
+        #expect(s.streak == 1)
+        let t = Session(cards: [Card("a", "지원, 지원하다"), Card("b", "x")], shuffle: false)
+        #expect(t.input("지원하다", composing: false, at: 0))
+    }
+
+    @Test func pastedTextCarriesOverPastAShortMeaning() {
+        let s = Session(cards: [Card("a", "가, 나"), Card("b", "다"), Card("c", "라")], shuffle: false)
+        let r = s.feed("나다라", composing: false, at: 0)
+        #expect(r.advanced == 3)
+        #expect(s.finished)
+    }
+
+    @Test func choicesLeaveOutOptionsSharingAMeaning() {
+        let cards = [Card("apply", "지원하다, 신청하다"), Card("register", "등록하다, 신청하다"),
+                     Card("hire", "고용하다"), Card("fire", "해고하다")]
+        for _ in 0..<20 {
+            let s = Session(cards: cards, shuffle: false, choices: 5)
+            #expect(!s.choices.contains("등록하다, 신청하다"))
+            #expect(s.choices.count == 3)
+        }
     }
 }

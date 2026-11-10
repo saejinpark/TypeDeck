@@ -125,7 +125,7 @@ function decorate(el, row, i) {
   const last = i === rows.length - 1;
   el.querySelector('.row-num').textContent = last ? '+' : String(i + 1);
   el.querySelector('.row-k').placeholder = last ? (i === 0 ? '키 (예: 대한민국)' : '새 카드 키') : '키';
-  el.querySelector('.row-v').placeholder = last ? (i === 0 ? '값 (예: 서울)' : '값') : '값';
+  el.querySelector('.row-v').placeholder = last ? (i === 0 ? '값 (여러 개면 쉼표로: 지원하다, 신청하다)' : '값 (쉼표로 여러 개)') : '값';
   el.classList.toggle('is-new', last);
   el.classList.toggle('incomplete', isIncomplete(row));
 }

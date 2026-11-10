@@ -209,7 +209,7 @@ struct DeckEditorView: View {
             HStack(spacing: 6) {
                 Text("").frame(width: 30)
                 Text("키").frame(maxWidth: .infinity, alignment: .leading)
-                Text("값").frame(maxWidth: .infinity, alignment: .leading).layoutPriority(1)
+                (Text("값 ") + Text("여러 개면 쉼표로 구분").foregroundStyle(.tertiary)).frame(maxWidth: .infinity, alignment: .leading).layoutPriority(1)
                 Text("").frame(width: 26)
             }
             .font(.caption.weight(.semibold))
@@ -255,7 +255,7 @@ struct DeckEditorView: View {
                  flagged: flagged && row.q.trimmingCharacters(in: .whitespaces).isEmpty)
                 .onSubmit { focus = .value(row.id) }
             cell(row, field: .value(row.id),
-                 prompt: isLast && i == 0 ? "값 (예: 서울)" : "값",
+                 prompt: isLast ? (i == 0 ? "값 (여러 개면 쉼표로: 지원하다, 신청하다)" : "값 (쉼표로 여러 개)") : "값",
                  text: Binding(get: { row.a }, set: { update(row.id, a: $0) }),
                  flagged: flagged && row.a.trimmingCharacters(in: .whitespaces).isEmpty)
                 .layoutPriority(1)

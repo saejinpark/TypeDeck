@@ -12,7 +12,8 @@ final class TypingInputView: NSView, NSTextInputClient {
     /// Called with the current text. Return the text to keep (the overflow) when the card was
     /// completed, or nil to keep typing on the same card.
     var onText: ((String, Bool) -> String?)?
-    var onCommand: ((Command) -> Void)?
+    /// Returns true when the card advanced and the buffer should be emptied.
+    var onCommand: ((Command) -> Bool)?
     var onKeystroke: (() -> Void)?
     var onFocusChange: ((Bool) -> Void)?
     /// Number keys 1-9 (top row or keypad). Return true to consume the key.
@@ -98,16 +99,19 @@ final class TypingInputView: NSView, NSTextInputClient {
         flush()
         switch selector {
         case #selector(insertNewline(_:)), #selector(insertLineBreak(_:)):
-            if !advancedDuringEvent { onCommand?(.submit) }
+            if !advancedDuringEvent, onCommand?(.submit) == true {
+                committed = ""
+                marked = ""
+            }
         case #selector(insertTab(_:)), #selector(insertBacktab(_:)):
             if !advancedDuringEvent {
-                onCommand?(.skip)
+                _ = onCommand?(.skip)
                 committed = ""
                 marked = ""
             }
         case #selector(cancelOperation(_:)):
             reset()
-            onCommand?(.clear)
+            _ = onCommand?(.clear)
         case #selector(deleteBackward(_:)):
             if !committed.isEmpty { committed.removeLast(); changed() }
         case #selector(deleteWordBackward(_:)):
@@ -216,7 +220,7 @@ struct TypingInput: NSViewRepresentable {
     var focusToken: Int
     var resetToken: Int
     var onText: (String, Bool) -> String?
-    var onCommand: (TypingInputView.Command) -> Void
+    var onCommand: (TypingInputView.Command) -> Bool
     var onKeystroke: () -> Void
     var onFocusChange: (Bool) -> Void
     var onNumberKey: (Int) -> Bool = { _ in false }

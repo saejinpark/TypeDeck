@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCards, serializeCards, diff, Session, REQUEUE_GAP } from '../docs/core.js';
+import { parseCards, serializeCards, diff, Session, REQUEUE_GAP, alternatives, pickTarget } from '../docs/core.js';
 
 test('parses the supported separators', () => {
   const cards = parseCards('a = 1\nb\t2\n# comment\n\nc: 3\nd=4\nno separator\ne = x = y\nf : git log --oneline');
@@ -44,8 +44,8 @@ test('a wrong character makes the card come back later', () => {
 
 test('enter reveals, tab skips and both count as a miss', () => {
   const s = new Session([['a', '1'], ['b', '2']], { shuffle: false });
-  assert.equal(s.submit(), 'reveal');
-  assert.equal(s.submit(), 'shake');
+  assert.equal(s.submit(0), 'reveal');
+  assert.equal(s.submit(0), 'shake');
   assert.equal(s.input('1', false, 5), 'advance');
   assert.equal(s.skip(10), 'advance');
   assert.equal(s.accuracy, 0);
@@ -174,14 +174,70 @@ test('multiple choice with a small deck uses what it has', () => {
 });
 
 test('migrateDecks replaces retired built-in decks once', () => {
-  const seed = [{ id: 'toeic-1', name: 'T', category: '토익', cards: [['a', '1']] }];
+  const seed = [{ id: 'toeic-basic-01', name: 'T', category: '토익', cards: [['a', '1']] }, { id: 'toefl-1', name: 'F', cards: [['b', '2']] }];
   const old = [{ id: 'proverbs', name: 'P', cards: [] }, { id: 'mine', name: 'M', cards: [['x', 'y']] }];
   const next = migrateDecks(old, 1, seed);
-  assert.deepEqual(next.map((d) => d.id), ['toeic-1', 'mine']);
+  assert.deepEqual(next.map((d) => d.id), ['toeic-basic-01', 'toefl-1', 'mine']);
   assert.equal(migrateDecks(next, SEED_VERSION, seed), next);
+  // Version 2 had three small TOEIC decks; they give way to the day decks, TOEFL is kept as is.
+  const v2 = [{ id: 'toeic-1', name: 'old', cards: [] }, { id: 'toefl-1', name: 'edited', cards: [] }, { id: 'mine', name: 'M', cards: [] }];
+  assert.deepEqual(migrateDecks(v2, 2, seed).map((d) => [d.id, d.name]), [['toeic-basic-01', 'T'], ['toefl-1', 'edited'], ['mine', 'M']]);
 });
 
 test('groupDecks keeps first-seen order and puts uncategorized last', () => {
   const g = groupDecks([{ id: 1, category: '토플' }, { id: 2 }, { id: 3, category: '토익' }, { id: 4, category: '토플' }]);
   assert.deepEqual(g.map((x) => [x.category, x.decks.map((d) => d.id)]), [['토플', [1, 4]], ['토익', [3]], ['', [2]]]);
+});
+
+test('alternatives split on commas but keep numbers like 1,000', () => {
+  assert.deepEqual(alternatives('지원하다, 신청하다'), ['지원하다', '신청하다']);
+  assert.deepEqual(alternatives('지원하다,신청하다 ,'), ['지원하다', '신청하다']);
+  assert.deepEqual(alternatives('1,000'), ['1,000']);
+  assert.deepEqual(alternatives('apply'), ['apply']);
+  assert.equal(pickTarget(['지원하다', '신청하다'], '신'), '신청하다');
+  assert.equal(pickTarget(['지원하다', '신청하다'], ''), '지원하다');
+});
+
+test('any one of several meanings completes the card', () => {
+  const s = new Session([['apply', '지원하다, 신청하다'], ['hire', '고용하다']], { shuffle: false });
+  assert.equal(s.input('신청', false, 0), 'none');
+  assert.equal(s.target, '신청하다');
+  assert.equal(s.hadError, false, 'heading for the second meaning is not an error');
+  assert.equal(s.input('신청하다', false, 10), 'advance');
+  assert.equal(s.current.q, 'hire');
+  assert.equal(s.streak, 1);
+});
+
+test('a meaning that starts a longer one waits for Enter', () => {
+  const s = new Session([['a', '지원, 지원하다'], ['b', 'x']], { shuffle: false });
+  assert.equal(s.input('지원', false, 0), 'none');
+  assert.equal(s.submit(5), 'advance');
+  assert.equal(s.current.q, 'b');
+  assert.equal(s.streak, 1, 'accepting with Enter is still a clean answer');
+  const t = new Session([['a', '지원, 지원하다'], ['b', 'x']], { shuffle: false });
+  assert.equal(t.input('지원하다', false, 0), 'advance');
+});
+
+test('reverse shows all meanings and asks for the word', () => {
+  const s = new Session([['apply', '지원하다, 신청하다']], { shuffle: false, reverse: true });
+  assert.equal(s.current.q, '지원하다, 신청하다');
+  assert.equal(s.input('apply', false, 0), 'advance');
+});
+
+test('pasted text carries over past a short meaning', () => {
+  const s = new Session([['a', '가, 나'], ['b', '다'], ['c', '라']], { shuffle: false });
+  assert.deepEqual(s.feed('나다라', false, 0), { advanced: 3, rest: '' });
+  assert.equal(s.finished, true);
+});
+
+test('multiple choice leaves out options that share a meaning with the answer', () => {
+  const cards = [['apply', '지원하다, 신청하다'], ['register', '등록하다, 신청하다'], ['hire', '고용하다'], ['fire', '해고하다']];
+  for (let seed = 0; seed < 20; seed++) {
+    let x = seed + 1;
+    const rng = () => ((x = (x * 16807) % 2147483647) / 2147483647);
+    const s = new Session(cards, { shuffle: false, choices: 5, rng });
+    assert.equal(s.current.q, 'apply');
+    assert.ok(!s.choices.includes('등록하다, 신청하다'));
+    assert.equal(s.choices.length, 3);
+  }
 });

@@ -128,8 +128,9 @@ function handleCommandKey(e) {
     return true;
   }
   if (key === 'Enter') {
-    const r = session.submit();
-    if (r === 'reveal') renderFront();
+    const r = session.submit(now);
+    if (r === 'advance') { clearInput(); showNext(); }
+    else if (r === 'reveal') renderFront();
     else if (r === 'shake') shake();
   } else if (key === 'Tab') {
     session.skip(now);
@@ -235,27 +236,34 @@ function fillFront(card) {
 function renderAnswer(card = stackEl().querySelector('.card.front')) {
   if (!card || !session?.current || isChoice()) return;
   const answer = card.querySelector('.answer');
-  const { a } = session.current;
+  const { alts } = session.current;
+  const target = session.target;
   const typed = session.typed;
   const showAnswer = store.settings.mode === 'copy' || session.revealed;
   const frag = document.createDocumentFragment();
   let hasError = false;
 
   if (showAnswer) {
-    const parts = diff(a, typed, session.composing);
-    const caretAt = chars(typed).length;
-    parts.forEach((p, i) => {
-      if (i === caretAt) frag.append(el('span', 'caret'));
-      const shown = p.state === 'extra' || p.state === 'comp' ? p.typed ?? p.ch : p.ch;
-      frag.append(el('span', p.state, shown));
-      if (p.state === 'bad' || p.state === 'extra') hasError = true;
+    // Every accepted answer is shown; the one being typed gets the character-by-character view.
+    alts.forEach((alt, k) => {
+      if (k > 0) frag.append(el('span', 'alt', ', '));
+      if (alt !== target) { frag.append(el('span', 'alt', alt)); return; }
+      const parts = diff(alt, typed, session.composing);
+      const caretAt = chars(typed).length;
+      parts.forEach((p, i) => {
+        if (i === caretAt) frag.append(el('span', 'caret'));
+        const shown = p.state === 'extra' || p.state === 'comp' ? p.typed ?? p.ch : p.ch;
+        frag.append(el('span', p.state, shown));
+        if (p.state === 'bad' || p.state === 'extra') hasError = true;
+      });
+      if (caretAt >= parts.length) frag.append(el('span', 'caret'));
     });
-    if (caretAt >= parts.length) frag.append(el('span', 'caret'));
   } else {
     if (typed) frag.append(el('span', 'typed', typed));
     frag.append(el('span', 'caret'));
     if (!typed) frag.append(el('span', 'recall-hint', '기억나는 대로 입력'));
   }
+  if (session.awaitingEnter) frag.append(el('span', 'recall-hint enter-hint', 'Enter ↵ 로 넘기기'));
   answer.replaceChildren(frag);
   card.classList.toggle('has-error', hasError);
 }

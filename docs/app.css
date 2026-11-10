@@ -142,11 +142,13 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .answer .bad { color: var(--bad); background: var(--bad-soft); border-radius: 4px; }
 .answer .extra { color: var(--bad); text-decoration: line-through; }
 .answer .comp, .answer .typed { color: var(--ink); }
+.answer .alt { color: var(--ghost); font-size: 0.68em; font-weight: 500; }
 .answer .comp { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 6px; }
 .caret { display: inline-block; width: 2.5px; height: 1.05em; margin: 0 -1.25px; vertical-align: -0.16em; background: var(--accent); border-radius: 2px; animation: blink 1s steps(1) 500ms infinite; }
 .arena:not(.focused) .caret { opacity: 0.25; animation: none; }
 @keyframes blink { 50% { opacity: 0; } }
 .recall-hint { color: var(--ghost); font-size: 0.6em; margin-left: 10px; vertical-align: 0.15em; }
+.enter-hint { color: var(--accent); font-weight: 650; font-size: 0.5em; }
 
 .sink {
   position: absolute; left: 0; bottom: 0; width: 1px; height: 1px;
@@ -217,6 +219,7 @@ kbd {
 .card-rows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; min-height: 0; }
 .card-rows[hidden], .field textarea[hidden] { display: none; }
 .card-rows-header, .card-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1.4fr) 32px; gap: 6px; align-items: center; padding: 0 8px; }
+.card-rows-header small { font-weight: 500; opacity: 0.75; margin-left: 4px; }
 .card-rows-header { padding-top: 8px; padding-bottom: 6px; font-size: 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .card-rows-body { overflow-y: auto; max-height: min(52dvh, 460px); padding: 6px 0; }
 .card-row { padding-top: 3px; padding-bottom: 3px; }
@@ -234,7 +237,7 @@ kbd {
 .spacer { flex: 1; }
 @media (hover: none) { .row-del { opacity: 1; } }
 @media (max-width: 760px) {
-  .cards-tip { display: none; }
+  .cards-tip, .card-rows-header small { display: none; }
   .card-rows-header, .card-row { grid-template-columns: 24px minmax(0, 1fr) minmax(0, 1fr) 28px; gap: 4px; padding: 0 6px; }
   .card-rows-body { max-height: 46dvh; }
 }

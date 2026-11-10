@@ -53,9 +53,11 @@ struct DeckFile: Codable {
 }
 
 enum Seed {
-    static let version = 2
-    /// Built-in decks from earlier versions that were replaced by the vocabulary decks.
-    static let retiredIDs: Set<String> = ["proverbs", "http-status", "git", "js-methods", "elements", "capitals"]
+    static let version = 3
+    /// Built-in decks from earlier versions that were replaced: the original sample decks (v2)
+    /// and the three 50-word TOEIC decks that became the full TOEIC day decks (v3).
+    static let retiredIDs: Set<String> = ["proverbs", "http-status", "git", "js-methods", "elements", "capitals",
+                                          "toeic-1", "toeic-2", "toeic-3"]
 
     /// Drops retired built-in decks and adds the current built-in ones, once per seed version.
     static func migrate(_ decks: [Deck], from version: Int, seed: [Deck]) -> [Deck] {
@@ -125,6 +127,44 @@ enum Core {
         }.joined(separator: "\n")
     }
 
+    /// Splits an answer like "지원하다, 신청하다" into the answers that are accepted. Any one of
+    /// them completes the card. A comma between two digits ("1,000") does not split.
+    static func alternatives(_ answer: String) -> [String] {
+        let s = normalize(answer).trimmingCharacters(in: .whitespaces)
+        let chars = Array(s)
+        var parts: [String] = []
+        var current = ""
+        for (i, ch) in chars.enumerated() {
+            let between = i > 0 && i < chars.count - 1 && chars[i - 1].isNumber && chars[i + 1].isNumber
+            if ch == "," && !between {
+                parts.append(current)
+                current = ""
+            } else {
+                current.append(ch)
+            }
+        }
+        parts.append(current)
+        var seen: Set<String> = []
+        let clean = parts.map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+        return clean.count > 1 ? clean : [s]
+    }
+
+    /// The accepted answer the typed text is heading for: the one sharing the longest prefix.
+    static func pickTarget(_ alts: [String], typed: String) -> String {
+        guard alts.count > 1 else { return alts.first ?? "" }
+        let t = Array(typed)
+        var best = alts[0]
+        var bestLen = -1
+        for alt in alts {
+            let a = Array(alt)
+            var k = 0
+            while k < t.count && k < a.count && a[k] == t[k] { k += 1 }
+            if k > bestLen { best = alt; bestLen = k }
+        }
+        return best
+    }
+
     static func diff(answer: String, typed: String, composing: Bool) -> [CharDiff] {
         let a = Array(answer)
         let t = Array(typed)
@@ -155,9 +195,11 @@ final class Session {
         let id: Int
         let q: String
         let a: String
+        /// Accepted answers: `a` split on commas.
+        let alts: [String]
     }
 
-    enum Outcome { case none, reveal, shake }
+    enum Outcome { case none, advance, reveal, shake }
 
     static let requeueGap = 4
     static let maxRequeues = 3
@@ -195,9 +237,8 @@ final class Session {
         choiceCount = choices > 1 ? choices : 0
         self.rng = AnyRandom(rng)
         items = cards.enumerated().map { i, card in
-            Item(id: i,
-                 q: reverse ? card.value : card.key,
-                 a: Core.normalize(reverse ? card.key : card.value))
+            let answer = Core.normalize(reverse ? card.key : card.value)
+            return Item(id: i, q: reverse ? card.value : card.key, a: answer, alts: Core.alternatives(answer))
         }
         let order = Array(items.indices)
         queue = shuffle ? order.shuffled(using: &rng) : order
@@ -207,9 +248,11 @@ final class Session {
     /// The answer plus distractors drawn from other cards' answers, shuffled.
     private func buildChoices() -> [String] {
         guard choiceCount > 0, let card = current else { return [] }
+        // Options that share a meaning with the answer would also be right, so they are left out.
+        let own = Set(card.alts)
         var seen: Set<String> = [card.a]
         var pool: [String] = []
-        for item in items where !seen.contains(item.a) {
+        for item in items where !seen.contains(item.a) && own.isDisjoint(with: item.alts) {
             seen.insert(item.a)
             pool.append(item.a)
         }
@@ -237,6 +280,18 @@ final class Session {
         return .wrong
     }
 
+    /// The accepted answer the current input is compared with.
+    var target: String { current.map { Core.pickTarget($0.alts, typed: typed) } ?? "" }
+
+    /// True when `text` is an accepted answer and no longer accepted answer starts with it,
+    /// so the card can finish without waiting for Return.
+    private func isComplete(_ text: String, _ card: Item) -> Bool {
+        card.alts.contains(text) && !card.alts.contains { $0 != text && $0.hasPrefix(text) }
+    }
+
+    /// The input is an accepted answer, but a longer one starts with it, so Return finishes it.
+    var awaitingReturn: Bool { current.map { !typed.isEmpty && $0.alts.contains(typed) } ?? false }
+
     var finished: Bool { pos >= queue.count }
     var current: Item? { finished ? nil : items[queue[pos]] }
     var remaining: Int { queue.count - pos }
@@ -258,11 +313,11 @@ final class Session {
         typed = Core.normalize(text)
         self.composing = composing
         if !typed.isEmpty && cardStart == nil { cardStart = now }
-        if typed == card.a {
+        if isComplete(typed, card) {
             complete(at: now)
             return true
         }
-        if Core.diff(answer: card.a, typed: typed, composing: composing)
+        if Core.diff(answer: target, typed: typed, composing: composing)
             .contains(where: { $0.state == .bad || $0.state == .extra }) {
             hadError = true
         }
@@ -273,10 +328,15 @@ final class Session {
     func feed(_ text: String, composing: Bool, at now: TimeInterval) -> (advanced: Int, rest: String) {
         var t = Core.normalize(text)
         var advanced = 0
-        while let card = current, !composing, t.count > card.a.count, t.hasPrefix(card.a) {
-            input(card.a, composing: false, at: now)
+        func overflowing() -> String? {
+            guard let card = current, !composing else { return nil }
+            return card.alts.sorted { $0.count > $1.count }.first { t.count > $0.count && t.hasPrefix($0) }
+        }
+        while let alt = overflowing() {
+            if cardStart == nil { cardStart = now }
+            complete(at: now)
             advanced += 1
-            t = String(t.dropFirst(card.a.count))
+            t = String(t.dropFirst(alt.count))
         }
         if finished { return (advanced, "") }
         if advanced > 0 && t.isEmpty { return (advanced, "") }
@@ -284,9 +344,14 @@ final class Session {
         return (advanced, t)
     }
 
-    /// Return key. Reveals the answer the first time.
-    func submit() -> Outcome {
-        guard !finished else { return .none }
+    /// Return key. Accepts an answer that is complete but also starts a longer one ("지원" when
+    /// "지원하다" is accepted too). Otherwise reveals the answer the first time.
+    func submit(at now: TimeInterval) -> Outcome {
+        guard let card = current else { return .none }
+        if !typed.isEmpty && !composing && card.alts.contains(typed) {
+            complete(at: now)
+            return .advance
+        }
         if revealed { return .shake }
         revealed = true
         return .reveal

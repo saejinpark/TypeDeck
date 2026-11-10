@@ -224,22 +224,30 @@ final class AppModel {
         if session.choose(index, at: now) == .wrong { shakeToken += 1 }
     }
 
-    func handle(_ command: TypingInputView.Command) {
-        guard let session else { return }
+    /// Returns true when the input buffer should be cleared because the card advanced.
+    @discardableResult
+    func handle(_ command: TypingInputView.Command) -> Bool {
+        guard let session else { return false }
         lastInput = Date()
         switch command {
         case .submit:
-            if session.finished { startSession(); return }
-            if session.submit() == .shake { shakeToken += 1 }
+            if session.finished { startSession(); return false }
+            switch session.submit(at: now) {
+            case .advance: return true
+            case .shake: shakeToken += 1
+            default: break
+            }
         case .skip:
             if session.finished {
                 if !session.missed.isEmpty { startSession(onlyMissed: true) }
-                return
+                return false
             }
             session.skip(at: now)
+            return true
         case .clear:
             session.input("", composing: false, at: now)
         }
+        return false
     }
 
     // MARK: PDF -> deck

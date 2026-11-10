@@ -54,6 +54,31 @@ export function diff(answer, typed, composing) {
   return out;
 }
 
+/**
+ * Splits an answer like "지원하다, 신청하다" into the answers that are accepted. Any one of them
+ * completes the card. A comma between two digits ("1,000") does not split.
+ */
+export function alternatives(answer) {
+  const s = normalize(answer).trim();
+  const parts = s.split(/(?<!\d),|,(?!\d)/).map((p) => p.trim()).filter(Boolean);
+  return parts.length > 1 ? [...new Set(parts)] : [s];
+}
+
+/** The accepted answer the typed text is heading for: the one sharing the longest prefix. */
+export function pickTarget(alts, typed) {
+  if (alts.length === 1) return alts[0];
+  const t = chars(typed);
+  let best = alts[0];
+  let bestLen = -1;
+  for (const alt of alts) {
+    const a = chars(alt);
+    let k = 0;
+    while (k < t.length && k < a.length && a[k] === t[k]) k++;
+    if (k > bestLen) { best = alt; bestLen = k; }
+  }
+  return best;
+}
+
 export function shuffled(list, rng = Math.random) {
   const a = list.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -73,11 +98,10 @@ export class Session {
     if (choices > 1) reverse = false;
     this.choiceCount = choices > 1 ? choices : 0;
     this.rng = rng;
-    this.items = cards.map(([q, a], id) => ({
-      id,
-      q: reverse ? a : q,
-      a: normalize(reverse ? q : a),
-    }));
+    this.items = cards.map(([q, a], id) => {
+      const answer = normalize(reverse ? q : a);
+      return { id, q: reverse ? a : q, a: answer, alts: alternatives(answer) };
+    });
     const order = this.items.map((it) => it.id);
     this.queue = shuffle ? shuffled(order, rng) : order;
     this.pos = 0;
@@ -104,7 +128,9 @@ export class Session {
   buildChoices() {
     const card = this.current;
     if (!card) return [];
-    const pool = [...new Set(this.items.map((it) => it.a))].filter((a) => a !== card.a);
+    // Options that share a meaning with the answer would also be right, so they are left out.
+    const own = new Set(card.alts);
+    const pool = [...new Set(this.items.filter((it) => !it.alts.some((x) => own.has(x))).map((it) => it.a))];
     const picks = shuffled(pool, this.rng).slice(0, this.choiceCount - 1);
     return shuffled([card.a, ...picks], this.rng);
   }
@@ -126,6 +152,25 @@ export class Session {
     return 'wrong';
   }
 
+  /** The accepted answer the current input is compared with. */
+  get target() {
+    return this.current ? pickTarget(this.current.alts, this.typed) : '';
+  }
+
+  /**
+   * True when `typed` is one of the accepted answers and no longer accepted answer starts with
+   * it, so the card can finish without waiting for Enter.
+   */
+  isComplete(typed) {
+    const { alts } = this.current;
+    return alts.includes(typed) && !alts.some((x) => x !== typed && x.startsWith(typed));
+  }
+
+  /** The input is an accepted answer, but a longer one starts with it, so Enter finishes it. */
+  get awaitingEnter() {
+    return Boolean(this.current && this.typed && this.current.alts.includes(this.typed));
+  }
+
   get finished() { return this.pos >= this.queue.length; }
   get current() { return this.finished ? null : this.items[this.queue[this.pos]]; }
   get remaining() { return this.queue.length - this.pos; }
@@ -143,11 +188,11 @@ export class Session {
     this.typed = normalize(text);
     this.composing = composing;
     if (this.typed && this.cardStart === null) this.cardStart = now;
-    if (this.typed === card.a) {
+    if (this.isComplete(this.typed)) {
       this.complete(now);
       return 'advance';
     }
-    if (diff(card.a, this.typed, composing).some((d) => d.state === 'bad' || d.state === 'extra')) {
+    if (diff(this.target, this.typed, composing).some((d) => d.state === 'bad' || d.state === 'extra')) {
       this.hadError = true;
     }
     return 'none';
@@ -160,9 +205,14 @@ export class Session {
   feed(text, composing, now) {
     let t = normalize(text);
     let advanced = 0;
-    while (!this.finished && !composing && t.length > this.current.a.length && t.startsWith(this.current.a)) {
-      const a = this.current.a;
-      this.input(a, false, now);
+    const overflowing = () => {
+      if (this.finished || composing) return null;
+      const longestFirst = [...this.current.alts].sort((x, y) => y.length - x.length);
+      return longestFirst.find((alt) => t.length > alt.length && t.startsWith(alt)) ?? null;
+    };
+    for (let a = overflowing(); a !== null; a = overflowing()) {
+      if (this.cardStart === null) this.cardStart = now;
+      this.complete(now);
       advanced++;
       t = t.slice(a.length);
     }
@@ -172,9 +222,16 @@ export class Session {
     return { advanced, rest: t };
   }
 
-  /** Enter key. Reveals the answer the first time. */
-  submit() {
+  /**
+   * Enter key. Accepts an answer that is complete but is also the start of a longer one
+   * ("지원" when "지원하다" is accepted too). Otherwise reveals the answer the first time.
+   */
+  submit(now) {
     if (this.finished) return 'none';
+    if (this.typed && !this.composing && this.current.alts.includes(this.typed)) {
+      this.complete(now);
+      return 'advance';
+    }
     if (this.revealed) return 'shake';
     this.revealed = true;
     return 'reveal';
@@ -321,9 +378,12 @@ export class InputTracker {
 
 /* ---------- decks ---------- */
 
-export const SEED_VERSION = 2;
-/** Built-in decks from earlier versions that were replaced by the vocabulary decks. */
-export const RETIRED_SEED_IDS = ['proverbs', 'http-status', 'git', 'js-methods', 'elements', 'capitals'];
+export const SEED_VERSION = 3;
+/**
+ * Built-in decks from earlier versions that were replaced: the original sample decks (v2) and
+ * the three 50-word TOEIC decks that became the full TOEIC day decks (v3).
+ */
+export const RETIRED_SEED_IDS = ['proverbs', 'http-status', 'git', 'js-methods', 'elements', 'capitals', 'toeic-1', 'toeic-2', 'toeic-3'];
 
 /** Drops retired built-in decks and adds the current built-in ones, once per seed version. */
 export function migrateDecks(decks, seedVersion, seed) {

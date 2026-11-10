@@ -142,7 +142,8 @@ private struct FrontCard: View {
 
     var body: some View {
         let showAnswer = model.mode == .copy || session.revealed
-        let parts = Core.diff(answer: item.a, typed: session.typed, composing: session.composing)
+        let target = session.target
+        let parts = Core.diff(answer: target, typed: session.typed, composing: session.composing)
         let hasError = showAnswer && parts.contains { $0.state == .bad || $0.state == .extra }
 
         VStack(alignment: .leading, spacing: 0) {
@@ -164,7 +165,8 @@ private struct FrontCard: View {
             Spacer(minLength: 10)
             DashedLine()
                 .padding(.bottom, 16)
-            AnswerLine(parts: parts, typed: session.typed, showAnswer: showAnswer)
+            AnswerLine(parts: parts, alts: item.alts, target: target, typed: session.typed, showAnswer: showAnswer,
+                       awaitingReturn: session.awaitingReturn)
                 .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
         }
         .padding(.horizontal, 34)
@@ -268,8 +270,12 @@ private struct DashedLine: View {
 private struct AnswerLine: View {
     @Environment(AppModel.self) private var model
     let parts: [CharDiff]
+    /// Every accepted answer; `target` is the one being typed and gets the character view.
+    let alts: [String]
+    let target: String
     let typed: String
     let showAnswer: Bool
+    var awaitingReturn = false
 
     private static let size: CGFloat = 30
 
@@ -294,29 +300,11 @@ private struct AnswerLine: View {
 
     private func attributed(caretOn: Bool, caretDim: Bool) -> AttributedString {
         var out = AttributedString()
-        let caretIndex = typed.count
         if showAnswer {
-            for (i, part) in parts.enumerated() {
-                if i == caretIndex { out += caret(on: caretOn, dim: caretDim) }
-                var run = AttributedString(String(part.shown))
-                switch part.state {
-                case .ok:
-                    run.foregroundColor = Palette.ink
-                case .bad:
-                    run.foregroundColor = Palette.bad
-                    run.backgroundColor = Palette.bad.opacity(0.15)
-                case .composing:
-                    run.foregroundColor = Palette.ink
-                    run.underlineStyle = Text.LineStyle(pattern: .solid, color: Palette.accent)
-                case .todo:
-                    run.foregroundColor = Palette.ghost
-                case .extra:
-                    run.foregroundColor = Palette.bad
-                    run.strikethroughStyle = Text.LineStyle(pattern: .solid, color: Palette.bad)
-                }
-                out += run
+            for (k, alt) in alts.enumerated() {
+                if k > 0 { out += muted(", ") }
+                if alt == target { out += diffRun(caretOn: caretOn, caretDim: caretDim) } else { out += muted(alt) }
             }
-            if caretIndex >= parts.count { out += caret(on: caretOn, dim: caretDim) }
         } else {
             var t = AttributedString(typed)
             t.foregroundColor = Palette.ink
@@ -329,6 +317,46 @@ private struct AnswerLine: View {
                 out += hint
             }
         }
+        if awaitingReturn {
+            var hint = AttributedString("  ↩ Return으로 넘기기")
+            hint.foregroundColor = Palette.accent
+            hint.font = .system(size: Self.size * 0.5, weight: .semibold)
+            out += hint
+        }
+        return out
+    }
+
+    private func muted(_ text: String) -> AttributedString {
+        var run = AttributedString(text)
+        run.foregroundColor = Palette.ghost
+        run.font = .system(size: Self.size * 0.68, weight: .regular)
+        return run
+    }
+
+    private func diffRun(caretOn: Bool, caretDim: Bool) -> AttributedString {
+        var out = AttributedString()
+        let caretIndex = typed.count
+        for (i, part) in parts.enumerated() {
+            if i == caretIndex { out += caret(on: caretOn, dim: caretDim) }
+            var run = AttributedString(String(part.shown))
+            switch part.state {
+            case .ok:
+                run.foregroundColor = Palette.ink
+            case .bad:
+                run.foregroundColor = Palette.bad
+                run.backgroundColor = Palette.bad.opacity(0.15)
+            case .composing:
+                run.foregroundColor = Palette.ink
+                run.underlineStyle = Text.LineStyle(pattern: .solid, color: Palette.accent)
+            case .todo:
+                run.foregroundColor = Palette.ghost
+            case .extra:
+                run.foregroundColor = Palette.bad
+                run.strikethroughStyle = Text.LineStyle(pattern: .solid, color: Palette.bad)
+            }
+            out += run
+        }
+        if caretIndex >= parts.count { out += caret(on: caretOn, dim: caretDim) }
         return out
     }
 }
