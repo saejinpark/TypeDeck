@@ -88,7 +88,7 @@ docs/            웹 앱 (GitHub Pages가 이 폴더를 그대로 배포)
   core.js        카드 파싱, 글자 비교, 세션 규칙 (DOM 없음)
   app.js         화면과 입력 처리
   editor.js      덱 편집기 (키/값 표)
-  decks.json     기본 덱(토익). 맥 앱도 이 파일을 번들에 넣어 씁니다
+  decks.json     첫 실행 때 고르는 예시 덱(토익). 맥 앱도 이 파일을 번들에 넣어 씁니다
 TypeDeck/        맥 앱 (SwiftUI + AppKit)
   Core.swift     core.js와 같은 규칙의 Swift 구현
   TypingInputView.swift  IME를 직접 받는 입력 뷰
