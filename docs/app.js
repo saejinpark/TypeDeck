@@ -1,4 +1,4 @@
-import { Session, InputTracker, diff, chars, migrateDecks, groupDecks, compactDecks, collapsedExcept, seedCategories, addSeedDecks, syncCategories, renameCategory, cleanCategory, SEED_VERSION, UNCATEGORIZED } from './core.js';
+import { Session, InputTracker, diff, chars, migrateDecks, groupDecks, compactDecks, recordResult, deckMastery, isMastered, cardKey, collapsedExcept, seedCategories, addSeedDecks, syncCategories, renameCategory, cleanCategory, SEED_VERSION, UNCATEGORIZED } from './core.js';
 import { setupEditor, openEditor as openDeckEditor, closeEditor } from './editor.js';
 import { enterHandler } from './keys.js';
 
@@ -12,7 +12,7 @@ const el = (tag, cls, text) => {
 };
 
 let seed = [];
-let store = { decks: [], categories: [], seedVersion: SEED_VERSION, settings: { deckId: null, mode: 'copy', reverse: false, shuffle: true, showNotes: true, collapsed: [] } };
+let store = { decks: [], categories: [], progress: {}, seedVersion: SEED_VERSION, settings: { deckId: null, mode: 'copy', reverse: false, shuffle: true, showNotes: true, weakOnly: false, collapsed: [] } };
 let session = null;
 let sessionCards = [];
 let sink = null;
@@ -140,15 +140,26 @@ function handleCommandKey(e) {
 
 /* ---------- session ---------- */
 
+let masteredAtStart = 0; // for the "+n" on the round summary
+
 function startSession(onlyMissed = false) {
   const deck = currentDeck();
   if (onlyMissed && session) {
     sessionCards = session.missed.map((it) => sessionCards[it.id]);
+  } else if (deck && store.settings.weakOnly) {
+    sessionCards = deck.cards.filter((c) => !isMastered(store.progress, deck.id, c));
   } else {
     sessionCards = deck ? deck.cards : [];
   }
+  masteredAtStart = deck ? deckMastery(store.progress, deck).mastered : 0;
   const { shuffle, reverse } = store.settings;
-  session = sessionCards.length ? new Session(sessionCards, { shuffle, reverse }) : null;
+  const onResult = (id, clean) => {
+    if (!deck) return;
+    recordResult(store.progress, deck.id, cardKey(sessionCards[id]), clean);
+    save();
+    paintDeckProgress(deck);
+  };
+  session = sessionCards.length ? new Session(sessionCards, { shuffle, reverse, onResult }) : null;
   clearInput();
   focusSink();
   renderStack();
@@ -326,6 +337,15 @@ function formatTime(ms) {
 const pct = (v) => (v === null ? '—' : `${Math.round(v * 100)}%`);
 const num = (v) => (v === null ? '—' : String(Math.round(v)));
 
+/** "외움 32/50 (+5)" for the round summary. */
+function memorizedStat() {
+  const deck = currentDeck();
+  if (!deck) return [];
+  const { mastered, total } = deckMastery(store.progress, deck);
+  const gained = mastered - masteredAtStart;
+  return [['외움', `${mastered}/${total}${gained > 0 ? ` (+${gained})` : ''}`]];
+}
+
 function summaryCard() {
   const card = el('article', 'card front summary');
   card.append(el('span', 'pill', '라운드 완료'), el('h2', '', `정확도 ${pct(session.accuracy)}`));
@@ -335,6 +355,7 @@ function summaryCard() {
     ['타/분', num(session.kpm)],
     ['시간', formatTime(session.activeMs)],
     ['최고 연속', String(session.bestStreak)],
+    ...memorizedStat(),
   ]) {
     const cell = el('div');
     cell.append(el('dt', '', k), el('dd', '', v));
@@ -370,6 +391,21 @@ function summaryCard() {
 
 function emptyCard() {
   const card = el('article', 'card front empty');
+  const deck = currentDeck();
+  if (deck?.cards.length && store.settings.weakOnly) {
+    card.classList.add('all-done');
+    card.append(el('h2', '', '이 덱은 모두 외웠어요'), el('p', '', `${deck.cards.length}장 모두 첫 시도에 3번 연속 맞혔어요.`));
+    const buttons = el('div', 'empty-actions');
+    const all = el('button', 'primary-btn keep-focus', '전체 다시 연습');
+    all.type = 'button';
+    all.addEventListener('click', () => { store.settings.weakOnly = false; save(); renderControls(); startSession(); });
+    const reset = el('button', 'ghost-btn keep-focus', '학습 기록 지우기');
+    reset.type = 'button';
+    reset.addEventListener('click', () => clearRecord(deck.id));
+    buttons.append(all, reset);
+    card.append(buttons);
+    return card;
+  }
   if (store.decks.length) {
     card.append(el('p', '', '이 덱에는 카드가 없어요.'));
     const btn = el('button', 'primary-btn', '카드 추가하기');
@@ -383,10 +419,10 @@ function emptyCard() {
   const cat = el('button', 'primary-btn', '＋ 새 카테고리');
   cat.type = 'button';
   cat.addEventListener('click', startNewCategory);
-  const deck = el('button', 'ghost-btn', '＋ 새 덱');
-  deck.type = 'button';
-  deck.addEventListener('click', () => openEditor(null));
-  buttons.append(cat, deck);
+  const newDeck = el('button', 'ghost-btn', '＋ 새 덱');
+  newDeck.type = 'button';
+  newDeck.addEventListener('click', () => openEditor(null));
+  buttons.append(cat, newDeck);
   card.append(buttons);
   return card;
 }
@@ -459,6 +495,7 @@ function renderDeckList() {
           for (const { deck, label } of block.items) {
             const b = el('button', 'deck-chip keep-focus', label);
             b.type = 'button';
+            b.dataset.deckId = deck.id;
             b.title = `${deck.name} · ${deck.cards.length}장`;
             b.setAttribute('aria-label', deck.name);
             b.setAttribute('aria-current', String(deck.id === store.settings.deckId));
@@ -472,6 +509,7 @@ function renderDeckList() {
         const { deck } = block;
         const b = el('button', 'deck-item keep-focus');
         b.type = 'button';
+        b.dataset.deckId = deck.id;
         b.setAttribute('aria-current', String(deck.id === store.settings.deckId));
         b.append(el('span', '', deck.name), el('span', 'count', String(deck.cards.length)));
         b.addEventListener('click', () => selectDeck(deck.id));
@@ -483,8 +521,10 @@ function renderDeckList() {
     list.append(section);
   }
   if (catEdit?.mode === 'new') list.append(categoryInput(''));
+  for (const d of store.decks) paintDeckProgress(d);
   const deck = currentDeck();
   $('#deckName').textContent = deck ? deck.name : 'TypeDeck';
+  if (deck) paintDeckProgress(deck); else $('#deckProgress').textContent = '';
   $('#editDeck').hidden = !deck;
   document.title = deck ? `${deck.name} · TypeDeck` : 'TypeDeck';
 }
@@ -607,6 +647,7 @@ function commitCategory(value) {
 /** Removes decks and keeps the selection and the collapsed list consistent. */
 function removeDecks(ids, dropCategory = null) {
   store.decks = store.decks.filter((d) => !ids.has(d.id));
+  for (const id of ids) delete store.progress[id];
   if (dropCategory !== null) store.categories = (store.categories ?? []).filter((c) => c !== dropCategory);
   store.categories = syncCategories(store.categories, store.decks);
   if (!currentDeck()) store.settings.deckId = store.decks[0]?.id ?? null;
@@ -651,6 +692,7 @@ function renderControls() {
     b.setAttribute('aria-checked', String(b.dataset.mode === store.settings.mode));
   }
   $('#reverseBtn').setAttribute('aria-pressed', String(store.settings.reverse));
+  $('#weakBtn').setAttribute('aria-pressed', String(Boolean(store.settings.weakOnly)));
   $('#notesBtn').setAttribute('aria-pressed', String(store.settings.showNotes !== false));
   $('#shuffleBtn').setAttribute('aria-pressed', String(store.settings.shuffle));
 }
@@ -668,13 +710,40 @@ function selectDeck(id) {
 function showStatus(text) {
   const n = $('#sidebarStatus');
   n.textContent = text;
-  clearTimeout(note.t);
-  note.t = setTimeout(() => { n.textContent = ''; }, 2500);
+  clearTimeout(showStatus.timer);
+  showStatus.timer = setTimeout(() => { n.textContent = ''; }, 2500);
 }
 
 /* ---------- editor ---------- */
 
 /** Opens the editor for deck `id`, or for a new deck in `category` (default: the current one). */
+/* ---------- learning progress in the sidebar and title ---------- */
+
+/** Shares of memorized cards: the sidebar row bar or number fill, and "외움 n/m" by the title. */
+function paintDeckProgress(deck) {
+  const { mastered, total } = deckMastery(store.progress, deck);
+  const share = total ? mastered / total : 0;
+  for (const node of document.querySelectorAll(`[data-deck-id="${CSS.escape(deck.id)}"]`)) {
+    node.style.setProperty('--p', share.toFixed(3));
+    node.classList.toggle('done', total > 0 && mastered === total);
+    const count = node.querySelector('.count');
+    if (count) count.textContent = mastered ? `${mastered}/${total}` : String(total);
+    if (node.classList.contains('deck-chip')) node.title = `${deck.name} · 외움 ${mastered}/${total}`;
+  }
+  if (deck.id === store.settings.deckId) $('#deckProgress').textContent = total ? `외움 ${mastered}/${total}` : '';
+}
+
+function clearRecord(deckId) {
+  const deck = store.decks.find((d) => d.id === deckId);
+  if (!deck || !confirm(`'${deck.name}'의 학습 기록을 지울까요?\n외운 카드가 모두 0부터 다시 시작해요.`)) return false;
+  delete store.progress[deckId];
+  save();
+  paintDeckProgress(deck);
+  if (deckId === store.settings.deckId) startSession();
+  showStatus('학습 기록을 지웠어요');
+  return true;
+}
+
 function openEditor(id, category) {
   const deck = id ? store.decks.find((d) => d.id === id) : null;
   const categories = syncCategories(store.categories, store.decks);
@@ -684,6 +753,8 @@ function openEditor(id, category) {
     defaultCategory,
     onSave: ({ name, category, cards }) => saveDeck(id, name, category, cards),
     onDelete: () => deleteDeck(id),
+    onClearRecord: () => clearRecord(id),
+    hasRecord: Boolean(id && store.progress[id] && Object.keys(store.progress[id]).length),
   });
 }
 
@@ -812,6 +883,10 @@ function bindUI() {
     store.settings.showNotes = store.settings.showNotes === false;
     save(); renderControls(); renderNote();
   });
+  $('#weakBtn').addEventListener('click', () => {
+    store.settings.weakOnly = !store.settings.weakOnly;
+    save(); renderControls(); startSession();
+  });
   $('#shuffleBtn').addEventListener('click', () => {
     store.settings.shuffle = !store.settings.shuffle;
     save(); renderControls(); startSession();
@@ -836,6 +911,7 @@ async function boot() {
     store = {
       decks: migrateDecks(saved.decks, saved.seedVersion, seed),
       categories: saved.categories ?? [],
+      progress: saved.progress ?? {},
       seedVersion: SEED_VERSION,
       settings: { ...store.settings, ...saved.settings },
     };

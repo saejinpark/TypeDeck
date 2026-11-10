@@ -29,6 +29,10 @@ struct PracticeView: View {
         }
         .background(Palette.background)
         .navigationTitle(model.selectedDeck?.name ?? "TypeDeck")
+        .navigationSubtitle(model.selectedDeck.map { d in
+            let m = model.mastery(of: d)
+            return m.total > 0 ? "외움 \(m.mastered)/\(m.total)" : ""
+        } ?? "")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Picker("연습 방식", selection: $model.mode) {
@@ -40,6 +44,8 @@ struct PracticeView: View {
                     .help("키와 값의 방향을 바꿉니다 (⇧⌘R)")
                 Toggle(isOn: $model.shuffle) { Label("섞기", systemImage: "shuffle") }
                     .help("카드 순서를 섞습니다")
+                Toggle(isOn: $model.weakOnly) { Label("못 외운 카드만", systemImage: "graduationcap") }
+                    .help("아직 못 외운 카드만으로 연습합니다 (첫 시도에 3번 연속 맞히면 외운 카드)")
                 Toggle(isOn: $model.showNotes) { Label("메모", systemImage: "text.alignleft") }
                     .help("카드 아래에 메모를 보여 줍니다")
                 Button {
@@ -391,6 +397,11 @@ private struct SummaryCard: View {
                 stat("타/분", number(session.kpm))
                 stat("시간", time(session.activeTime))
                 stat("최고 연속", "\(session.bestStreak)")
+                if let deck = model.selectedDeck {
+                    let m = model.mastery(of: deck)
+                    let gained = m.mastered - model.masteredAtStart
+                    stat("외움", "\(m.mastered)/\(m.total)" + (gained > 0 ? " (+\(gained))" : ""))
+                }
             }
             let missed = session.missed
             if !missed.isEmpty {
@@ -444,7 +455,18 @@ private struct EmptyCard: View {
     @Environment(AppModel.self) private var model
     var body: some View {
         VStack(spacing: 12) {
-            if model.decks.isEmpty {
+            if let deck = model.selectedDeck, !deck.cards.isEmpty, model.weakOnly {
+                Text("이 덱은 모두 외웠어요")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(Palette.ink)
+                Text("\(deck.cards.count)장 모두 첫 시도에 3번 연속 맞혔어요.")
+                    .foregroundStyle(Palette.muted)
+                HStack {
+                    Button("전체 다시 연습") { model.weakOnly = false }
+                        .buttonStyle(.borderedProminent)
+                    Button("학습 기록 지우기") { model.clearRecord(deck.id) }
+                }
+            } else if model.decks.isEmpty {
                 Text("아직 덱이 없어요. 공부할 주제마다 카테고리를 만들고, 외울 것을 덱으로 정리해 보세요.")
                     .foregroundStyle(Palette.muted)
                     .multilineTextAlignment(.center)

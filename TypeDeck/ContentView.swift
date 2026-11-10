@@ -102,13 +102,24 @@ struct ContentView: View {
     }
 
     private func deckRow(_ deck: Deck) -> some View {
-        HStack {
+        let m = model.mastery(of: deck)
+        return HStack {
             Text(deck.name).lineLimit(1)
             Spacer()
-            Text("\(deck.cards.count)")
+            Text(m.mastered > 0 ? "\(m.mastered)/\(m.total)" : "\(m.total)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
+        }
+        // A thin bar of the memorized share.
+        .overlay(alignment: .bottomLeading) {
+            GeometryReader { geo in
+                Capsule().fill(Palette.accent.opacity(0.75))
+                    .frame(width: geo.size.width * share(m), height: 2)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+            }
+            .offset(y: 3)
+            .allowsHitTesting(false)
         }
         .padding(.leading, 18)
         .modifier(HoverActions(actions: [.init(icon: "trash", label: "'\(deck.name)' 덱 삭제") { pendingDelete = deck }]))
@@ -161,6 +172,7 @@ struct ContentView: View {
                         switch block {
                         case .grid(let prefix, let items):
                             DeckGrid(prefix: prefix, items: items, selectedID: model.selectedDeckID,
+                                     mastery: { model.mastery(of: $0) },
                                      select: { model.select($0) },
                                      edit: { model.editorTarget = .deck($0) },
                                      delete: { pendingDelete = $0 })
@@ -257,6 +269,7 @@ private struct DeckGrid: View {
     let prefix: String
     let items: [(deck: Deck, label: String)]
     let selectedID: String?
+    let mastery: (Deck) -> (mastered: Int, total: Int)
     let select: (String) -> Void
     let edit: (String) -> Void
     let delete: (Deck) -> Void
@@ -269,18 +282,29 @@ private struct DeckGrid: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 34), spacing: 4)], spacing: 4) {
                 ForEach(items, id: \.deck.id) { item in
                     let selected = item.deck.id == selectedID
+                    let m = mastery(item.deck)
+                    let done = m.total > 0 && m.mastered == m.total
                     Button { select(item.deck.id) } label: {
                         Text(item.label)
                             .font(.system(size: 12, weight: .semibold))
                             .monospacedDigit()
                             .frame(maxWidth: .infinity, minHeight: 26)
                             .foregroundStyle(selected ? Color.white : Palette.ink)
+                            // Fills from the bottom with the memorized share.
+                            .background(alignment: .bottom) {
+                                GeometryReader { geo in
+                                    Rectangle().fill(Palette.accent.opacity(0.22))
+                                        .frame(height: geo.size.height * share(m))
+                                        .frame(maxHeight: .infinity, alignment: .bottom)
+                                }
+                            }
                             .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Palette.accent : Color.clear))
-                            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(selected ? Palette.accent : Palette.line))
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(selected || done ? Palette.accent : Palette.line))
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("\(item.deck.name) · \(item.deck.cards.count)장")
+                    .help("\(item.deck.name) · 외움 \(m.mastered)/\(m.total)")
                     .accessibilityLabel(item.deck.name)
                     .accessibilityAddTraits(selected ? .isSelected : [])
                     .contextMenu {
@@ -292,6 +316,11 @@ private struct DeckGrid: View {
         }
         .padding(.vertical, 4)
     }
+}
+
+/// Memorized share of a deck, 0...1.
+private func share(_ m: (mastered: Int, total: Int)) -> CGFloat {
+    m.total > 0 ? CGFloat(m.mastered) / CGFloat(m.total) : 0
 }
 
 /// Small buttons that show over the trailing edge of a sidebar row while it is hovered.

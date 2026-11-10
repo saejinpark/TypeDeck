@@ -147,7 +147,7 @@ test('parseCardsDetailed counts lines it could not use', () => {
   assert.equal(r.skipped, 2);
 });
 
-import { migrateDecks, groupDecks, compactDecks, collapsedExcept, seedCategories, addSeedDecks, syncCategories, renameCategory, parseImport, SEED_VERSION } from '../docs/core.js';
+import { migrateDecks, groupDecks, compactDecks, recordResult, deckMastery, isMastered, MASTERY, collapsedExcept, seedCategories, addSeedDecks, syncCategories, renameCategory, parseImport, SEED_VERSION } from '../docs/core.js';
 
 
 test('migrateDecks adds built-in decks newer than the stored data, once', () => {
@@ -337,4 +337,32 @@ test('enterHandler: an Enter that finishes a Hangul syllable counts once', async
   assert.equal(runs, 1);
   // Other keys are not handled.
   assert.equal(onKey({ key: 'a' }), false);
+});
+
+test('learning record: three clean first tries in a row memorize a card, a miss starts over', () => {
+  const deck = { id: 'd', cards: [['apply', '지원하다'], ['hire', '고용하다']] };
+  const progress = {};
+  for (let i = 0; i < MASTERY; i++) recordResult(progress, 'd', 'apply', true);
+  assert.ok(isMastered(progress, 'd', deck.cards[0]));
+  assert.deepEqual(deckMastery(progress, deck), { mastered: 1, total: 2 });
+  recordResult(progress, 'd', 'apply', false);
+  assert.ok(!isMastered(progress, 'd', deck.cards[0]));
+  assert.equal(progress.d.apply.seen, MASTERY + 1);
+});
+
+test('Session reports each card once, on its first try only', () => {
+  const results = [];
+  const s = new Session([['a', '1'], ['b', '2']], { shuffle: false, onResult: (id, clean) => results.push([id, clean]) });
+  s.input('x', false, 0);           // a miss on card 0
+  s.input('1', false, 1);           // finished, comes back later
+  s.input('2', false, 2);
+  while (!s.finished) s.input(s.current.a, false, 3);
+  assert.deepEqual(results, [[0, false], [1, true]]);
+});
+
+test('every web script parses', async () => {
+  const { execFileSync } = await import('node:child_process');
+  for (const file of ['app.js', 'editor.js', 'keys.js', 'core.js']) {
+    execFileSync(process.execPath, ['--check', new URL(`../docs/${file}`, import.meta.url).pathname]);
+  }
 });

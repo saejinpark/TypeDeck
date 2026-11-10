@@ -129,7 +129,9 @@ export const MAX_REQUEUES = 3;
 
 /** One round through a deck. Cards that were missed come back a few cards later. */
 export class Session {
-  constructor(cards, { shuffle = true, reverse = false, rng = Math.random } = {}) {
+  /** `onResult(id, clean)` is told each card's first try in this round (for the learning record). */
+  constructor(cards, { shuffle = true, reverse = false, rng = Math.random, onResult = null } = {}) {
+    this.onResult = onResult;
     this.items = cards.map(([q, a, note], id) => {
       const target = typingTarget(reverse ? q : a);
       return { id, q: reverse ? a : q, a: target.text, target, note: note ?? '' };
@@ -225,7 +227,10 @@ export class Session {
     const card = this.current;
     this.lastDone = card;
     const clean = !this.hadError && !this.revealed;
-    if (!this.first.has(card.id)) this.first.set(card.id, clean);
+    if (!this.first.has(card.id)) {
+      this.first.set(card.id, clean);
+      this.onResult?.(card.id, clean);
+    }
     if (this.cardStart !== null) this.activeMs += Math.max(0, now - this.cardStart);
     if (clean) {
       this.streak++;
@@ -392,6 +397,34 @@ export function addSeedDecks(decks, seed, add) {
 export function collapsedExcept(decks, deckId) {
   const open = (decks.find((d) => d.id === deckId)?.category ?? '').trim();
   return [...new Set(decks.map((d) => (d.category ?? '').trim()))].filter((c) => c !== open);
+}
+
+/* ---------- learning record ---------- */
+
+/** A card counts as memorized after this many clean first tries in a row. */
+export const MASTERY = 3;
+
+/** The learning record is keyed by the card's key, so it survives reordering and edits of the value. */
+export const cardKey = (card) => normalize(card[0]).trim();
+
+/**
+ * Notes one first try of a card. `progress` is { deckId: { cardKey: { streak, seen } } }: clean
+ * first tries in a row, and how often the card was practiced. A miss starts the streak over.
+ */
+export function recordResult(progress, deckId, key, clean) {
+  const deck = (progress[deckId] ??= {});
+  const rec = (deck[key] ??= { streak: 0, seen: 0 });
+  rec.seen += 1;
+  rec.streak = clean ? rec.streak + 1 : 0;
+  return rec;
+}
+
+export const isMastered = (progress, deckId, card) => (progress?.[deckId]?.[cardKey(card)]?.streak ?? 0) >= MASTERY;
+
+/** How many of a deck's cards are memorized. */
+export function deckMastery(progress, deck) {
+  const mastered = deck.cards.filter((c) => isMastered(progress, deck.id, c)).length;
+  return { mastered, total: deck.cards.length };
 }
 
 /** Longest last word (in characters) that still counts as a short label, like "01". */

@@ -69,6 +69,39 @@ struct DeckFile: Codable {
     var categories: [String]?
 }
 
+/// Learning record of one card: clean first tries in a row, and how often it was practiced.
+struct CardRecord: Codable, Equatable {
+    var streak = 0
+    var seen = 0
+}
+
+enum Mastery {
+    /// A card counts as memorized after this many clean first tries in a row.
+    static let threshold = 3
+    /// deck id → card key → record. Keyed by the card's key, so it survives reordering and edits
+    /// of the value.
+    typealias Progress = [String: [String: CardRecord]]
+
+    static func key(_ card: Card) -> String { Core.normalize(card.key).trimmingCharacters(in: .whitespaces) }
+
+    /// Notes one first try of a card. A miss starts the streak over.
+    static func record(_ progress: inout Progress, deckID: String, card: Card, clean: Bool) {
+        var rec = progress[deckID]?[key(card)] ?? CardRecord()
+        rec.seen += 1
+        rec.streak = clean ? rec.streak + 1 : 0
+        progress[deckID, default: [:]][key(card)] = rec
+    }
+
+    static func isMastered(_ progress: Progress, deckID: String, card: Card) -> Bool {
+        (progress[deckID]?[key(card)]?.streak ?? 0) >= threshold
+    }
+
+    /// How many of a deck's cards are memorized.
+    static func count(_ progress: Progress, deck: Deck) -> (mastered: Int, total: Int) {
+        (deck.cards.filter { isMastered(progress, deckID: deck.id, card: $0) }.count, deck.cards.count)
+    }
+}
+
 enum Seed {
     static let version = 6
 
@@ -457,6 +490,8 @@ final class Session {
     private var requeues: [Int: Int] = [:]
     /// The card finished most recently, for showing its 메모.
     private(set) var lastDone: Item?
+    /// Told each card's first try in this round (item id, clean), for the learning record.
+    @ObservationIgnored var onResult: ((Int, Bool) -> Void)?
 
     /// Replaces the 메모 of item `id` (after it was edited during practice).
     func setNote(_ note: String, forItem id: Int) {
@@ -547,6 +582,7 @@ final class Session {
         let clean = !hadError && !revealed
         if !firstResults.contains(where: { $0.id == card.id }) {
             firstResults.append((card.id, clean))
+            onResult?(card.id, clean)
         }
         if let start = cardStart { activeTime += max(0, now - start) }
         if clean {

@@ -76,6 +76,14 @@ final class AppModel {
     var showNotes: Bool {
         didSet { defaults.set(showNotes, forKey: Keys.showNotes) }
     }
+    /// Practices only the cards that are not memorized yet.
+    var weakOnly: Bool {
+        didSet { defaults.set(weakOnly, forKey: Keys.weakOnly); startSession() }
+    }
+    /// The learning record of every deck.
+    private(set) var progress: Mastery.Progress = [:]
+    /// Memorized cards of the deck when the round started, for the "+n" on the summary.
+    private(set) var masteredAtStart = 0
 
     var editorTarget: EditorTarget?
 
@@ -107,11 +115,12 @@ final class AppModel {
     /// For each session item, the index of its card in the selected deck.
     private var sessionCardIndices: [Int] = []
     private let storeURL: URL?
+    private let progressURL: URL?
     private let defaults: UserDefaults
 
     private enum Keys {
         static let deck = "selectedDeckID", mode = "mode", reverse = "reverse", shuffle = "shuffle"
-        static let seedVersion = "seedVersion", collapsed = "collapsedCategories", showNotes = "showNotes"
+        static let seedVersion = "seedVersion", collapsed = "collapsedCategories", showNotes = "showNotes", weakOnly = "weakOnly"
     }
 
     init(storeURL: URL? = AppModel.defaultStoreURL, defaults: UserDefaults = .standard, bundle: Bundle = .main) {
@@ -122,6 +131,12 @@ final class AppModel {
         reverse = defaults.bool(forKey: Keys.reverse)
         shuffle = defaults.object(forKey: Keys.shuffle) as? Bool ?? true
         showNotes = defaults.object(forKey: Keys.showNotes) as? Bool ?? true
+        weakOnly = defaults.bool(forKey: Keys.weakOnly)
+        progressURL = storeURL?.deletingLastPathComponent().appendingPathComponent("progress.json")
+        if let url = progressURL, let data = try? Data(contentsOf: url),
+           let stored = try? JSONDecoder().decode(Mastery.Progress.self, from: data) {
+            progress = stored
+        }
         collapsedCategories = Set(defaults.stringArray(forKey: Keys.collapsed) ?? [])
         let storedVersion = defaults.integer(forKey: Keys.seedVersion)
         let stored = Self.loadFile(from: storeURL)
@@ -169,6 +184,35 @@ final class AppModel {
     }
 
     var selectedDeck: Deck? { decks.first { $0.id == selectedDeckID } }
+
+    // MARK: Learning record
+
+    func mastery(of deck: Deck) -> (mastered: Int, total: Int) { Mastery.count(progress, deck: deck) }
+
+    func hasRecord(_ deckID: String) -> Bool { !(progress[deckID]?.isEmpty ?? true) }
+
+    /// Forgets what was memorized in a deck.
+    func clearRecord(_ deckID: String) {
+        progress[deckID] = nil
+        saveProgress()
+        if deckID == selectedDeckID { startSession() }
+    }
+
+    private func record(item id: Int, clean: Bool) {
+        guard let deckID = selectedDeckID, sessionCards.indices.contains(id) else { return }
+        Mastery.record(&progress, deckID: deckID, card: sessionCards[id], clean: clean)
+        saveProgress()
+    }
+
+    private func saveProgress() {
+        guard let progressURL else { return }
+        do {
+            try FileManager.default.createDirectory(at: progressURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(progress).write(to: progressURL, options: .atomic)
+        } catch {
+            NSLog("TypeDeck: could not save the learning record: \(error)")
+        }
+    }
 
     private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
 
@@ -260,6 +304,7 @@ final class AppModel {
 
     func delete(_ id: String) {
         decks.removeAll { $0.id == id }
+        if progress.removeValue(forKey: id) != nil { saveProgress() }
         save()
         if selectedDeckID == id {
             selectedDeckID = nil
@@ -271,6 +316,8 @@ final class AppModel {
     func deleteCategory(_ category: String) {
         let ids = Set(decks.filter { $0.category.cleanedCategory == category }.map(\.id))
         decks.removeAll { ids.contains($0.id) }
+        for id in ids { progress[id] = nil }
+        saveProgress()
         categoryOrder.removeAll { $0 == category }
         collapsedCategories.remove(category)
         save()
@@ -303,10 +350,15 @@ final class AppModel {
             sessionCardIndices = session.missed.map { sessionCardIndices[$0.id] }
             sessionCards = session.missed.map { sessionCards[$0.id] }
         } else {
-            sessionCards = selectedDeck?.cards ?? []
-            sessionCardIndices = Array(sessionCards.indices)
+            let all = selectedDeck?.cards ?? []
+            let id = selectedDeckID ?? ""
+            let indices = weakOnly ? all.indices.filter { !Mastery.isMastered(progress, deckID: id, card: all[$0]) } : Array(all.indices)
+            sessionCards = indices.map { all[$0] }
+            sessionCardIndices = indices
         }
+        masteredAtStart = selectedDeck.map { mastery(of: $0).mastered } ?? 0
         session = sessionCards.isEmpty ? nil : Session(cards: sessionCards, shuffle: shuffle, reverse: reverse)
+        session?.onResult = { [weak self] id, clean in self?.record(item: id, clean: clean) }
         resetToken += 1
         refocus()
     }

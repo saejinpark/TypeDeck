@@ -35,6 +35,7 @@
       <header class="topbar">
         <div class="deck-title">
           <h1 id="deckName">TypeDeck</h1>
+          <span class="deck-progress" id="deckProgress" title="첫 시도에 3번 연속 맞힌 카드를 외운 카드로 셉니다"></span>
           <button class="ghost-btn small keep-focus" id="editDeck" type="button">편집</button>
         </div>
         <div class="controls">
@@ -44,6 +45,7 @@
           </div>
           <button class="toggle keep-focus" type="button" id="reverseBtn" aria-pressed="false" title="키와 값의 방향을 바꿉니다">⇄ 뒤집기</button>
           <button class="toggle keep-focus" type="button" id="shuffleBtn" aria-pressed="true" title="카드 순서를 섞습니다">섞기</button>
+          <button class="toggle keep-focus" type="button" id="weakBtn" aria-pressed="false" title="아직 못 외운 카드만으로 연습합니다">못 외운 카드만</button>
           <button class="toggle keep-focus" type="button" id="notesBtn" aria-pressed="true" title="카드 아래에 메모를 보여 줍니다">메모</button>
         </div>
       </header>
@@ -114,6 +116,7 @@
       <p class="editor-message" id="editorMessage" role="status"></p>
       <div class="editor-actions">
         <button type="button" class="danger-btn" id="editorDelete">덱 삭제</button>
+        <button type="button" class="link-btn" id="editorClearRecord" title="이 덱의 외운 기록을 지웁니다">학습 기록 지우기</button>
         <span class="spacer"></span>
         <button type="button" class="ghost-btn" id="editorCancel">취소</button>
         <button type="button" class="primary-btn" id="editorSave">저장 <span class="shortcut">⌘↵</span></button>

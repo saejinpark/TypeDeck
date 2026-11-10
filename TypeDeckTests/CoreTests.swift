@@ -506,3 +506,55 @@ struct DeckGridTests {
         #expect(view(Seed.compact([d("1", "1장 개요"), d("2", "2장 네트워크"), d("3", "3장 보안")])) == ["1장 개요", "2장 네트워크", "3장 보안"])
     }
 }
+
+struct MasteryTests {
+    @Test func threeCleanFirstTriesMemorizeACardAndAMissStartsOver() {
+        let deck = Deck(id: "d", name: "", cards: [Card("apply", "지원하다"), Card("hire", "고용하다")])
+        var progress: Mastery.Progress = [:]
+        for _ in 0..<Mastery.threshold { Mastery.record(&progress, deckID: "d", card: deck.cards[0], clean: true) }
+        #expect(Mastery.isMastered(progress, deckID: "d", card: deck.cards[0]))
+        #expect(Mastery.count(progress, deck: deck) == (1, 2))
+        Mastery.record(&progress, deckID: "d", card: deck.cards[0], clean: false)
+        #expect(!Mastery.isMastered(progress, deckID: "d", card: deck.cards[0]))
+        #expect(progress["d"]?["apply"]?.seen == Mastery.threshold + 1)
+    }
+
+    @Test func sessionReportsEachCardOnceOnItsFirstTry() {
+        var results: [[Int]] = []
+        let s = Session(cards: [Card("a", "1"), Card("b", "2")], shuffle: false)
+        s.onResult = { id, clean in results.append([id, clean ? 1 : 0]) }
+        s.input("x", composing: false, at: 0)
+        s.input("1", composing: false, at: 1)
+        s.input("2", composing: false, at: 2)
+        while let c = s.current { s.input(c.a, composing: false, at: 3) }
+        #expect(results == [[0, 0], [1, 1]])
+    }
+}
+
+@MainActor
+struct LearningRecordModelTests {
+    @Test func recordIsSavedAndWeakOnlyPracticesTheRest() {
+        let suite = "TypeDeckTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let store = FileManager.default.temporaryDirectory.appendingPathComponent(suite).appendingPathComponent("decks.json")
+        let m = AppModel(storeURL: store, defaults: defaults, bundle: Bundle(for: Session.self))
+        m.finishWelcome(sampleCategories: [])
+        m.shuffle = false
+        m.upsert(id: nil, name: "단어", category: "", cards: [Card("line", "줄"), Card("hire", "고용하다")])
+        for _ in 0..<Mastery.threshold {
+            m.startSession()
+            _ = m.handleText("줄", composing: false)
+            _ = m.handleText("고용하", composing: false) // wrong for hire
+            m.handle(.skip)
+            while let c = m.session?.current { _ = m.handleText(c.a, composing: false) }
+        }
+        let deck = try! #require(m.selectedDeck)
+        #expect(m.mastery(of: deck) == (1, 2))
+        m.weakOnly = true
+        #expect(m.session?.items.map(\.q) == ["hire"])
+        let reloaded = AppModel(storeURL: store, defaults: defaults, bundle: Bundle(for: Session.self))
+        #expect(reloaded.mastery(of: try! #require(reloaded.selectedDeck)) == (1, 2), "the record is saved")
+        reloaded.clearRecord(deck.id)
+        #expect(reloaded.mastery(of: try! #require(reloaded.selectedDeck)) == (0, 2))
+    }
+}

@@ -13,6 +13,7 @@ let rows = []; // [{ q, a, n, open }], n is the 메모; the last row is always t
 let view = 'rows';
 let onSave = null;
 let onDelete = null;
+let onClearRecord = null;
 let dirty = false;
 let warnedIncomplete = false;
 
@@ -128,6 +129,9 @@ export function setupEditor() {
   $('#editorSave').addEventListener('click', save);
   $('#editorCancel').addEventListener('click', () => requestClose());
   $('#editorDelete').addEventListener('click', () => onDelete?.());
+  $('#editorClearRecord').addEventListener('click', () => {
+    if (onClearRecord?.()) $('#editorClearRecord').hidden = true;
+  });
   $('#editor').addEventListener('cancel', (e) => {
     e.preventDefault();
     requestClose();
@@ -144,6 +148,8 @@ export function openEditor(deck, handlers) {
   $('#editorCategory').value = deck ? deck.category ?? '' : handlers.defaultCategory ?? '';
   onSave = handlers.onSave;
   onDelete = handlers.onDelete;
+  onClearRecord = handlers.onClearRecord;
+  $('#editorClearRecord').hidden = !deck || !handlers.hasRecord;
   dirty = false;
   warnedIncomplete = false;
   $('#editorTitle').textContent = deck ? '덱 편집' : '새 덱';

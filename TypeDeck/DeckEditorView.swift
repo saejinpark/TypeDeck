@@ -86,6 +86,7 @@ struct DeckEditorView: View {
     @State private var warnedIncomplete = false
     @State private var confirmDelete = false
     @State private var confirmDiscard = false
+    @State private var confirmClearRecord = false
     @FocusState private var focus: Field?
     /// Share of the row width given to the key column; the divider between the columns sets it.
     @AppStorage("editorKeyRatio") private var keyRatio = ColumnLayout.defaultRatio
@@ -165,6 +166,11 @@ struct DeckEditorView: View {
             HStack {
                 if deckID != nil {
                     Button("덱 삭제", role: .destructive) { confirmDelete = true }
+                    if let id = deckID, model.hasRecord(id) {
+                        Button("학습 기록 지우기") { confirmClearRecord = true }
+                            .buttonStyle(.link)
+                            .help("이 덱의 외운 기록을 지웁니다")
+                    }
                 }
                 Spacer()
                 Button("취소") { requestClose() }
@@ -193,6 +199,11 @@ struct DeckEditorView: View {
             }
         } message: {
             Text("되돌릴 수 없어요.")
+        }
+        .confirmationDialog("'\(name)'의 학습 기록을 지울까요?", isPresented: $confirmClearRecord) {
+            Button("기록 지우기", role: .destructive) { if let id = deckID { model.clearRecord(id) } }
+        } message: {
+            Text("외운 카드가 모두 0부터 다시 시작해요.")
         }
         .confirmationDialog("저장하지 않은 변경이 있어요. 닫을까요?", isPresented: $confirmDiscard) {
             Button("저장하지 않고 닫기", role: .destructive) { dismiss() }

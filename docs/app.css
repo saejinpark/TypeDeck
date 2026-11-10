@@ -90,7 +90,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
   height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: transparent;
   font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink);
 }
-.deck-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
+.deck-chip { background: linear-gradient(to top, var(--accent-soft) calc(var(--p, 0) * 100%), transparent 0); }
+.deck-chip.done { border-color: var(--accent); }
+.deck-chip:hover { border-color: var(--accent); }
 .deck-chip[aria-current="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
 .group-row, .deck-row { position: relative; display: flex; align-items: center; min-width: 0; }
 .group-row .group-head, .deck-row .deck-item { flex: 1; min-width: 0; }
@@ -112,6 +114,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .cat-input-row { padding: 2px 0; }
 .cat-input { width: 100%; padding: 7px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--card); color: var(--ink); font: inherit; font-size: 13.5px; font-weight: 600; outline: none; }
 .empty p { max-width: 340px; line-height: 1.55; }
+.empty.all-done h2 { margin: 0; font-size: 24px; color: var(--ink); }
 .empty-actions { display: flex; gap: 8px; }
 @media (hover: none) {
   .row-actions { opacity: 0.75; }
@@ -124,6 +127,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
   text-align: left; font-size: 14.5px; font-weight: 500;
 }
 .deck-item:hover { background: var(--accent-soft); }
+.deck-item[data-deck-id] { position: relative; }
+.deck-item[data-deck-id]::after {
+  content: ''; position: absolute; left: 24px; right: 10px; bottom: 3px; height: 2px; border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) calc(var(--p, 0) * 100%), transparent 0); opacity: 0.75;
+}
 .deck-item[aria-current="true"] { background: var(--ink); color: var(--bg); }
 .deck-item .count { font-size: 12px; color: var(--muted); }
 .deck-item[aria-current="true"] .count { color: inherit; opacity: 0.6; }
@@ -143,6 +151,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* Stage */
 .stage { display: grid; grid-template-rows: auto 1fr auto; min-width: 0; min-height: 0; }
 .topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 28px; flex-wrap: wrap; }
+.deck-progress { font-size: 12.5px; font-weight: 650; color: var(--accent); white-space: nowrap; }
 .deck-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .deck-title h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
