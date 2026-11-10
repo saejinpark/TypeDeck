@@ -444,3 +444,43 @@ struct SeedV5Tests {
         }
     }
 }
+
+@MainActor
+struct PracticeNoteTests {
+    @Test func noteWrittenDuringPracticeGoesIntoTheDeck() {
+        let suite = "TypeDeckTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let store = FileManager.default.temporaryDirectory.appendingPathComponent("\(suite).json")
+        let m = AppModel(storeURL: store, defaults: defaults, bundle: Bundle(for: Session.self))
+        m.finishWelcome(sampleCategories: [])
+        m.upsert(id: nil, name: "단어", category: "", cards: [Card("line", "줄"), Card("hire", "고용하다")])
+        m.shuffle = false
+        let item = try! #require(m.session?.current)
+        m.setNote("  line up: 줄을 서다  ", forItem: item.id)
+        #expect(m.selectedDeck?.cards[item.id].note == "line up: 줄을 서다")
+        #expect(m.session?.current?.note == "line up: 줄을 서다")
+        m.setNote("", forItem: item.id)
+        #expect(m.selectedDeck?.cards[item.id].note == "")
+        let reloaded = AppModel(storeURL: store, defaults: defaults, bundle: Bundle(for: Session.self))
+        #expect(reloaded.selectedDeck?.cards.map(\.note) == ["", ""])
+    }
+
+    @Test func missedOnlyRoundWritesToTheRightCard() {
+        let suite = "TypeDeckTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let store = FileManager.default.temporaryDirectory.appendingPathComponent("\(suite).json")
+        let m = AppModel(storeURL: store, defaults: defaults, bundle: Bundle(for: Session.self))
+        m.finishWelcome(sampleCategories: [])
+        m.shuffle = false
+        m.upsert(id: nil, name: "단어", category: "", cards: [Card("line", "줄"), Card("hire", "고용하다")])
+        _ = m.handleText("줄", composing: false)
+        m.handle(.skip) // hire is missed
+        _ = m.handleText("고용하다", composing: false)
+        #expect(m.session?.finished == true)
+        m.startSession(onlyMissed: true)
+        let item = try! #require(m.session?.current)
+        #expect(item.q == "hire")
+        m.setNote("hire = 고용하다", forItem: item.id)
+        #expect(m.selectedDeck?.cards.map(\.note) == ["", "hire = 고용하다"])
+    }
+}

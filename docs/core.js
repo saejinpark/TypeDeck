@@ -7,7 +7,7 @@ const SEPARATORS = ['\t', ' = ', ' : ', '=', ':'];
 
 /**
  * Parses "key = value" lines (tab, " = ", " : ", "=", ":" in that order of preference). Lines
- * starting with ">" right after a card are that card's note (해설); cards with a note come back
+ * starting with ">" right after a card are that card's note (메모); cards with a note come back
  * as [key, value, note].
  */
 export function parseCards(text) {
@@ -125,7 +125,7 @@ export class Session {
     this.activeMs = 0;
     this.streak = 0;
     this.bestStreak = 0;
-    this.lastDone = null; // the card finished most recently, for showing its 해설
+    this.lastDone = null; // the card finished most recently, for showing its 메모
     this.resetCard();
   }
 
@@ -465,7 +465,7 @@ export function renameCategory(decks, order, from, to) {
 
 /**
  * Splits CSV text into records of fields. Quotes may wrap a field, "" is a literal quote, and a
- * quoted field may span lines (a long 해설 with line breaks).
+ * quoted field may span lines (a long 메모 with line breaks).
  */
 function csvRecords(text, sep) {
   const records = [];
@@ -494,9 +494,9 @@ function csvRecords(text, sep) {
 }
 
 /**
- * Reads cards from an imported file. CSV and TSV columns are key, value and 해설 (a comma inside
+ * Reads cards from an imported file. CSV and TSV columns are key, value and 메모 (a comma inside
  * quotes stays in the value, so "지원하다, 신청하다" keeps both meanings); anything else uses
- * the same separators as pasting, with "> " lines as 해설.
+ * the same separators as pasting, with "> " lines as 메모.
  */
 export function parseImport(text, fileName = '') {
   const ext = (fileName.split('.').pop() ?? '').toLowerCase();

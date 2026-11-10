@@ -8,7 +8,7 @@ import { parseCards, parseCardsDetailed, parseImport, serializeCards } from './c
 
 const $ = (sel) => document.querySelector(sel);
 
-let rows = []; // [{ q, a, n, open }], n is the 해설; the last row is always the empty "new card" row
+let rows = []; // [{ q, a, n, open }], n is the 메모; the last row is always the empty "new card" row
 let view = 'rows';
 let onSave = null;
 let onDelete = null;
@@ -188,7 +188,7 @@ function rowEl(row, i) {
     <span class="row-num"></span>
     <input class="row-k" autocomplete="off" spellcheck="false" aria-label="키">
     <input class="row-v" autocomplete="off" spellcheck="false" aria-label="값">
-    <button type="button" class="row-note-btn" tabindex="-1" aria-label="해설" title="해설 쓰기 · 보기"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3 4h10M3 8h10M3 12h6"/></svg></button>
+    <button type="button" class="row-note-btn" tabindex="-1" aria-label="메모" title="메모 쓰기 · 보기"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3 4h10M3 8h10M3 12h6"/></svg></button>
     <button type="button" class="row-del" tabindex="-1" aria-label="카드 삭제" title="카드 삭제">×</button>`;
   el.querySelector('.row-k').value = row.q;
   el.querySelector('.row-v').value = row.a;
@@ -196,7 +196,7 @@ function rowEl(row, i) {
     const area = document.createElement('textarea');
     area.className = 'row-note';
     area.rows = 3;
-    area.placeholder = '해설 (문법, 표현, 외울 점…) · 연습할 때 카드 아래에 나와요';
+    area.placeholder = '메모 (뜻풀이, 예문, 외우는 요령, 문법 설명…) · 연습할 때 카드 아래에 나와요';
     area.value = row.n;
     el.append(area);
     requestAnimationFrame(() => fitNote(area));
@@ -221,7 +221,7 @@ function fitNote(area) {
   area.style.height = `${Math.min(area.scrollHeight + 2, 320)}px`;
 }
 
-/** Opens or closes the 해설 field under row `i`. */
+/** Opens or closes the 메모 field under row `i`. */
 function toggleNote(i) {
   const row = rows[i];
   if (!row || i === rows.length - 1) return;

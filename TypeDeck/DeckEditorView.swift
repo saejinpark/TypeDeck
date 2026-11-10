@@ -7,7 +7,7 @@ struct EditorRows: Equatable {
         let id = UUID()
         var q = ""
         var a = ""
-        /// 해설; kept with the card but not needed for it to be complete.
+        /// 메모; kept with the card but not needed for it to be complete.
         var n = ""
         var isBlank: Bool { q.trimmingCharacters(in: .whitespaces).isEmpty && a.trimmingCharacters(in: .whitespaces).isEmpty }
         var isComplete: Bool { !q.trimmingCharacters(in: .whitespaces).isEmpty && !a.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -91,7 +91,7 @@ struct DeckEditorView: View {
     @AppStorage("editorKeyRatio") private var keyRatio = ColumnLayout.defaultRatio
     @State private var dragStartRatio: Double?
     @State private var dividerHover = false
-    /// Rows whose 해설 field is open.
+    /// Rows whose 메모 field is open.
     @State private var openNotes: Set<UUID> = []
 
     private var deckID: String? {
@@ -308,7 +308,7 @@ struct DeckEditorView: View {
                                                                  lineWidth: focus == .note(row.id) ? 2 : 1))
         .overlay(alignment: .topLeading) {
             if row.n.isEmpty {
-                Text("해설 (문법, 표현, 외울 점…) · 연습할 때 카드 아래에 나와요")
+                Text("메모 (뜻풀이, 예문, 외우는 요령, 문법 설명…) · 연습할 때 카드 아래에 나와요")
                     .font(.system(size: 13))
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 11)
@@ -359,8 +359,8 @@ struct DeckEditorView: View {
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(!row.n.isEmpty || noteOpen ? Palette.accent : Palette.muted)
-                .help(row.n.isEmpty ? "해설 쓰기" : "해설 보기")
-                .accessibilityLabel("해설")
+                .help(row.n.isEmpty ? "메모 쓰기" : "메모 보기")
+                .accessibilityLabel("메모")
                 Button {
                     remove(row.id)
                 } label: {
@@ -577,7 +577,7 @@ struct DeckEditorView: View {
 /// long placeholder can no longer squeeze the key column away.
 struct ColumnLayout {
     static let number: CGFloat = 30
-    /// The 해설 and delete buttons at the end of a row.
+    /// The 메모 and delete buttons at the end of a row.
     static let actions: CGFloat = 52
     static let spacing: CGFloat = 6
     static let inset: CGFloat = 10

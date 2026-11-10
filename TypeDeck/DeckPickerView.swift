@@ -57,7 +57,7 @@ struct DeckPickerView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(c.category.isEmpty ? Seed.uncategorized : c.category)
                         .font(.system(size: 14, weight: .semibold))
-                    Text("덱 \(c.decks.count)개 · \(c.words.formatted())장" + (c.decks.contains { $0.cards.contains { !$0.note.isEmpty } } ? " · 해설 포함" : ""))
+                    Text("덱 \(c.decks.count)개 · \(c.words.formatted())장")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

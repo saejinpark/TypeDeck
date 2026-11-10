@@ -200,27 +200,68 @@ function renderFront() {
   renderNote();
 }
 
-const deckHasNotes = () => sessionCards.some((c) => c[2]);
+/* ---------- 메모 under the card ---------- */
+
+let noteEditing = null; // the session item whose 메모 is being written
 
 /**
- * The 해설 panel under the card. In 따라치기 (or once the answer is shown) it explains the
- * current card; in 외워치기 it explains the card just finished, so reading never holds up typing.
+ * The 메모 panel under the card, the same for every deck. In 따라치기 (or once the answer is
+ * shown) it belongs to the current card; in 외워치기 to the card just finished, so reading never
+ * holds up typing. A card without a 메모 shows only a '메모 쓰기' button.
  */
 function renderNote() {
   const panel = $('#notePanel');
-  $('#notesBtn').hidden = !deckHasNotes();
-  const show = Boolean(session) && deckHasNotes() && store.settings.showNotes !== false;
+  $('#notesBtn').hidden = !session;
+  const live = Boolean(session) && !session.finished && (store.settings.mode === 'copy' || session.revealed);
+  const item = !session ? null : live ? session.current : session.lastDone;
+  if (noteEditing && noteEditing !== item) commitNote();
+  const show = Boolean(item) && store.settings.showNotes !== false;
   panel.hidden = !show;
   if (!show) return;
-  const live = !session.finished && (store.settings.mode === 'copy' || session.revealed);
-  const item = live ? session.current : session.lastDone;
-  $('#noteLabel').textContent = live ? '해설' : '방금 친 문장';
-  $('#noteFor').textContent = item && !live ? item.a : '';
+  $('#noteLabel').textContent = live ? '메모' : '방금 친 카드';
+  $('#noteFor').textContent = live ? '' : item.a;
+  const editing = noteEditing === item;
   const body = $('#noteBody');
-  if (!item) body.textContent = '문장을 다 치면 여기에 해설이 나와요.';
-  else body.textContent = item.note || '이 카드에는 해설이 없어요.';
-  body.classList.toggle('empty', !item?.note);
+  body.textContent = item.note;
+  body.hidden = editing || !item.note;
   body.scrollTop = 0;
+  $('#noteEditor').hidden = !editing;
+  $('#noteEdit').hidden = editing;
+  $('#noteEdit').textContent = item.note ? '고치기' : '＋ 메모 쓰기';
+  panel.classList.toggle('slim', !item.note && !editing);
+}
+
+function startNoteEdit() {
+  const live = !session.finished && (store.settings.mode === 'copy' || session.revealed);
+  noteEditing = live ? session.current : session.lastDone;
+  if (!noteEditing) return;
+  renderNote();
+  const input = $('#noteInput');
+  input.value = noteEditing.note;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+/** Saves the 메모 being written into the deck (an empty one removes it). */
+function commitNote() {
+  const item = noteEditing;
+  noteEditing = null;
+  if (!item) return;
+  const text = $('#noteInput').value.trim();
+  if (text === item.note) return;
+  const card = sessionCards[item.id]; // the deck's own card array
+  if (text) card[2] = text;
+  else card.length = 2;
+  item.note = text;
+  save();
+  note(text ? '메모를 저장했어요' : '메모를 지웠어요');
+}
+
+function finishNoteEdit(keep) {
+  if (keep) commitNote();
+  else noteEditing = null;
+  renderNote();
+  focusSink();
 }
 
 function fillFront(card) {
@@ -689,7 +730,7 @@ function openWelcome() {
     box.checked = true;
     const text = el('span', 'picker-text');
     text.append(el('b', '', c.category || UNCATEGORIZED),
-      el('small', '', `덱 ${c.decks.length}개 · ${c.words.toLocaleString('ko-KR')}장${c.decks.some((d) => d.cards.some((x) => x[2])) ? ' · 해설 포함' : ''}`));
+      el('small', '', `덱 ${c.decks.length}개 · ${c.words.toLocaleString('ko-KR')}장`));
     row.append(box, text);
     box.addEventListener('change', update);
     list.append(row);
@@ -732,7 +773,7 @@ function bindUI() {
     if (e.target.closest('.keep-focus')) e.preventDefault();
   });
   $('#arena').addEventListener('mousedown', (e) => {
-    // The 해설 panel can be selected and scrolled; typing still goes to the card.
+    // The 메모 panel can be selected and scrolled; typing still goes to the card.
     if (!e.target.closest('button, .note-panel')) { e.preventDefault(); focusSink(); }
   });
   window.addEventListener('focus', focusSink);
@@ -758,6 +799,14 @@ function bindUI() {
   $('#reverseBtn').addEventListener('click', () => {
     store.settings.reverse = !store.settings.reverse;
     save(); renderControls(); startSession();
+  });
+  $('#noteEdit').addEventListener('click', startNoteEdit);
+  $('#noteSave').addEventListener('click', () => finishNoteEdit(true));
+  $('#noteCancel').addEventListener('click', () => finishNoteEdit(false));
+  $('#noteInput').addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); finishNoteEdit(true); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finishNoteEdit(false); }
   });
   $('#notesBtn').addEventListener('click', () => {
     store.settings.showNotes = store.settings.showNotes === false;

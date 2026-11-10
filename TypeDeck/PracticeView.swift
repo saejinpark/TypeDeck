@@ -40,10 +40,8 @@ struct PracticeView: View {
                     .help("키와 값의 방향을 바꿉니다 (⇧⌘R)")
                 Toggle(isOn: $model.shuffle) { Label("섞기", systemImage: "shuffle") }
                     .help("카드 순서를 섞습니다")
-                if model.deckHasNotes {
-                    Toggle(isOn: $model.showNotes) { Label("해설", systemImage: "text.alignleft") }
-                        .help("카드 아래에 해설을 보여 줍니다")
-                }
+                Toggle(isOn: $model.showNotes) { Label("메모", systemImage: "text.alignleft") }
+                    .help("카드 아래에 메모를 보여 줍니다")
                 Button {
                     if let id = model.selectedDeckID { model.editorTarget = .deck(id) }
                 } label: { Label("편집", systemImage: "square.and.pencil") }
@@ -67,8 +65,9 @@ struct PracticeView: View {
             } else {
                 VStack(spacing: 6) {
                     CardStack(session: session)
-                    if model.deckHasNotes && model.showNotes {
-                        NotePanel(session: session)
+                    if model.showNotes, let shown = NotePanel.shownItem(session, mode: model.mode) {
+                        NotePanel(item: shown.item, live: shown.live)
+                            .id(shown.item.id)
                             .padding(.top, 26) // clears the cards stacked behind the front one
                     }
                 }
@@ -209,45 +208,96 @@ private struct DashedLine: View {
     }
 }
 
-/// 해설 under the card. In 따라치기 (or once the answer is shown) it explains the current card;
-/// in 외워치기 it explains the card just finished, so reading never holds up typing.
+/// 메모 under the card, the same for every deck. In 따라치기 (or once the answer is shown) it
+/// belongs to the current card; in 외워치기 to the card just finished, so reading never holds up
+/// typing. A card without a 메모 shows only a '메모 쓰기' button, and either can be edited here.
 private struct NotePanel: View {
     @Environment(AppModel.self) private var model
-    let session: Session
+    let item: Session.Item
+    let live: Bool
+    @State private var editing = false
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    static func shownItem(_ session: Session, mode: PracticeMode) -> (item: Session.Item, live: Bool)? {
+        let live = !session.finished && (mode == .copy || session.revealed)
+        guard let item = live ? session.current : session.lastDone else { return nil }
+        return (item, live)
+    }
 
     var body: some View {
-        let live = !session.finished && (model.mode == .copy || session.revealed)
-        let item = live ? session.current : session.lastDone
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(live ? "해설" : "방금 친 문장")
+                Text(live ? "메모" : "방금 친 카드")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Palette.accent)
-                if let item, !live {
+                if !live {
                     Text(item.a)
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Palette.muted)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
+                Spacer(minLength: 8)
+                if !editing {
+                    Button(item.note.isEmpty ? "＋ 메모 쓰기" : "고치기") { startEditing() }
+                        .buttonStyle(.link)
+                        .font(.system(size: 12.5, weight: .semibold))
+                }
             }
-            ScrollView {
-                Text(item.map { $0.note.isEmpty ? "이 카드에는 해설이 없어요." : $0.note } ?? "문장을 다 치면 여기에 해설이 나와요.")
+            if editing {
+                TextEditor(text: $draft)
                     .font(.system(size: 14))
-                    .lineSpacing(5)
-                    .foregroundStyle(item?.note.isEmpty == false ? Palette.ink : Palette.muted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(4)
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .frame(minHeight: 80, maxHeight: 180)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Palette.card))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.accent, lineWidth: 2))
+                    .focused($focused)
+                HStack {
+                    Text("⌘↩ 저장 · esc 취소").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("취소") { stopEditing(save: false) }
+                        .keyboardShortcut(.cancelAction)
+                    Button("저장") { stopEditing(save: true) }
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .buttonStyle(.borderedProminent)
+                }
+                .controlSize(.small)
+            } else if !item.note.isEmpty {
+                ScrollView {
+                    Text(item.note)
+                        .font(.system(size: 14))
+                        .lineSpacing(5)
+                        .foregroundStyle(Palette.ink)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .scrollIndicators(.automatic)
             }
-            .id(item?.id)
-            .scrollIndicators(.automatic)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
         // Takes what is left under the card (up to 240pt) and scrolls; never pushes the window.
-        .frame(maxWidth: .infinity, minHeight: 70, maxHeight: 240, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: item.note.isEmpty && !editing ? nil : 240, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 16).fill(Palette.panel))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Palette.line))
+        .onDisappear { if editing { stopEditing(save: true) } }
+    }
+
+    private func startEditing() {
+        draft = item.note
+        editing = true
+        DispatchQueue.main.async { focused = true }
+    }
+
+    private func stopEditing(save: Bool) {
+        if save && draft.trimmingCharacters(in: .whitespacesAndNewlines) != item.note {
+            model.setNote(draft, forItem: item.id)
+        }
+        editing = false
+        model.refocus()
     }
 }
 

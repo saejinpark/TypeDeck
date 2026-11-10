@@ -77,12 +77,10 @@ final class AppModel {
     var shuffle: Bool {
         didSet { defaults.set(shuffle, forKey: Keys.shuffle); startSession() }
     }
-    /// Shows the 해설 panel under the card when the deck has notes.
+    /// Shows the 메모 panel under the card.
     var showNotes: Bool {
         didSet { defaults.set(showNotes, forKey: Keys.showNotes) }
     }
-    /// Whether any card being practiced has a 해설.
-    var deckHasNotes: Bool { sessionCards.contains { !$0.note.isEmpty } }
 
     var editorTarget: EditorTarget?
 
@@ -110,6 +108,8 @@ final class AppModel {
 
     let seed: [Deck]
     private var sessionCards: [Card] = []
+    /// For each session item, the index of its card in the selected deck.
+    private var sessionCardIndices: [Int] = []
     private let storeURL: URL?
     private let defaults: UserDefaults
 
@@ -314,9 +314,11 @@ final class AppModel {
 
     func startSession(onlyMissed: Bool = false) {
         if onlyMissed, let session {
+            sessionCardIndices = session.missed.map { sessionCardIndices[$0.id] }
             sessionCards = session.missed.map { sessionCards[$0.id] }
         } else {
             sessionCards = selectedDeck?.cards ?? []
+            sessionCardIndices = Array(sessionCards.indices)
         }
         session = sessionCards.isEmpty ? nil : Session(cards: sessionCards, shuffle: shuffle, reverse: reverse)
         resetToken += 1
@@ -324,6 +326,19 @@ final class AppModel {
     }
 
     func refocus() { focusToken += 1 }
+
+    /// Saves the 메모 of session item `id` into the deck (empty removes it).
+    func setNote(_ text: String, forItem id: Int) {
+        let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let deckIndex = decks.firstIndex(where: { $0.id == selectedDeckID }),
+              sessionCardIndices.indices.contains(id) else { return }
+        let cardIndex = sessionCardIndices[id]
+        guard decks[deckIndex].cards.indices.contains(cardIndex) else { return }
+        decks[deckIndex].cards[cardIndex].note = note
+        sessionCards[id].note = note
+        session?.setNote(note, forItem: id)
+        save()
+    }
 
     func keystroke() {
         session?.keystroke(at: now)

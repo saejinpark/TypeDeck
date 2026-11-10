@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// One key/value pair with an optional note (해설). Stored in JSON as `[key, value]` or
+/// One key/value pair with an optional note (메모). Stored in JSON as `[key, value]` or
 /// `[key, value, note]`, the same format the web app uses.
 struct Card: Hashable, Codable {
     var key: String
@@ -203,7 +203,7 @@ enum Core {
     }
 
     /// Splits CSV text into records; quotes may wrap a field, "" is a literal quote, and a quoted
-    /// field may span lines (a long 해설 with line breaks).
+    /// field may span lines (a long 메모 with line breaks).
     private static func csvRecords(_ text: String, separator: Character) -> [[String]] {
         var records: [[String]] = []
         var fields: [String] = []
@@ -350,7 +350,7 @@ final class Session {
         let a: String
         /// Accepted answers: `a` split on commas.
         let alts: [String]
-        /// 해설 shown with the card; empty when the card has none.
+        /// 메모 shown with the card; empty when the card has none.
         var note: String = ""
     }
 
@@ -359,7 +359,7 @@ final class Session {
     static let requeueGap = 4
     static let maxRequeues = 3
 
-    let items: [Item]
+    private(set) var items: [Item]
     private(set) var queue: [Int]
     private(set) var pos = 0
     private(set) var typed = ""
@@ -375,8 +375,15 @@ final class Session {
 
     private var cardStart: TimeInterval?
     private var requeues: [Int: Int] = [:]
-    /// The card finished most recently, for showing its 해설.
+    /// The card finished most recently, for showing its 메모.
     private(set) var lastDone: Item?
+
+    /// Replaces the 메모 of item `id` (after it was edited during practice).
+    func setNote(_ note: String, forItem id: Int) {
+        guard items.indices.contains(id) else { return }
+        items[id].note = note
+        if lastDone?.id == id { lastDone?.note = note }
+    }
 
     convenience init(cards: [Card], shuffle: Bool = true, reverse: Bool = false) {
         var rng = SystemRandomNumberGenerator()
@@ -384,11 +391,12 @@ final class Session {
     }
 
     init<R: RandomNumberGenerator>(cards: [Card], shuffle: Bool, reverse: Bool, using rng: inout R) {
-        items = cards.enumerated().map { i, card in
+        let built = cards.enumerated().map { i, card in
             let answer = Core.normalize(reverse ? card.key : card.value)
             return Item(id: i, q: reverse ? card.value : card.key, a: answer, alts: Core.alternatives(answer), note: card.note)
         }
-        let order = Array(items.indices)
+        let order = Array(built.indices)
+        items = built
         queue = shuffle ? order.shuffled(using: &rng) : order
     }
 
