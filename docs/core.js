@@ -396,6 +396,12 @@ export function migrateDecks(decks, seedVersion, seed) {
 
 export const UNCATEGORIZED = '미분류';
 
+/** Every category except the one holding `deckId`: the sidebar starts with only that one open. */
+export function collapsedExcept(decks, deckId) {
+  const open = (decks.find((d) => d.id === deckId)?.category ?? '').trim();
+  return [...new Set(decks.map((d) => (d.category ?? '').trim()))].filter((c) => c !== open);
+}
+
 /** Groups decks by category in order of first appearance; decks without one go last. */
 export function groupDecks(decks) {
   const groups = new Map();

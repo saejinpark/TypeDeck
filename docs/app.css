@@ -59,6 +59,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
   min-height: 0;
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 8px; font-weight: 800; font-size: 18px; letter-spacing: -0.02em; }
+.deck-tools { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 0 8px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.deck-tools .link-btn { font-size: 12px; }
 .deck-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; flex: 1; min-height: 0; }
 .deck-group { display: flex; flex-direction: column; gap: 2px; }
 .deck-group + .deck-group { margin-top: 8px; }
@@ -66,8 +68,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
   display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 8px; border: 0; border-radius: 8px;
   background: transparent; text-align: left; font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: 0.02em;
 }
-.group-head:hover { color: var(--ink); }
-.group-head .chev { display: inline-block; width: 10px; transition: transform 120ms; font-size: 14px; line-height: 1; }
+.group-head:hover { color: var(--ink); background: var(--accent-soft); }
+.group-head.has-current { color: var(--ink); }
+.group-head .chev { display: inline-flex; justify-content: center; width: 14px; transition: transform 120ms; font-size: 17px; font-weight: 800; line-height: 1; }
 .group-head[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .group-head .group-name { flex: 1; }
 .group-head .count { font-size: 11px; font-weight: 600; }
@@ -247,7 +250,7 @@ kbd {
 @media (max-width: 760px) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .sidebar { flex-direction: row; align-items: center; padding: 10px 16px; border-right: 0; border-bottom: 1px solid var(--line); gap: 10px; }
-  .brand span, .sidebar-foot .link-btn, .note { display: none; }
+  .brand span, .sidebar-foot .link-btn, .note, .deck-tools { display: none; }
   .brand { padding: 0; }
   .deck-list { flex-direction: row; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .deck-item { width: auto; white-space: nowrap; }

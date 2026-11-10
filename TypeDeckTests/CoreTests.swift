@@ -186,6 +186,13 @@ struct ChoiceAndSeedTests {
         #expect(g[0].decks.map(\.id) == ["1", "4"])
     }
 
+    @Test func onlyTheCurrentDecksCategoryStartsOpen() {
+        let decks = [Deck(id: "a", name: "", category: "토익 기초", cards: []), Deck(id: "b", name: "", category: "토익 기초", cards: []),
+                     Deck(id: "c", name: "", category: "토플", cards: []), Deck(id: "d", name: "", cards: [])]
+        #expect(Seed.collapsed(except: "c", in: decks) == ["토익 기초", ""])
+        #expect(Seed.collapsed(except: "missing", in: decks) == ["토익 기초", "토플"])
+    }
+
     @Test func decksWithoutCategoryStillDecode() throws {
         let json = #"{"version":1,"decks":[{"id":"a","name":"A","cards":[["k","v"]]}]}"#
         let file = try JSONDecoder().decode(DeckFile.self, from: Data(json.utf8))
@@ -252,5 +259,41 @@ struct MultipleMeaningTests {
             #expect(!s.choices.contains("등록하다, 신청하다"))
             #expect(s.choices.count == 3)
         }
+    }
+}
+
+@MainActor
+struct SidebarStateTests {
+    private func makeModel(seedVersion: Int?, collapsed: [String]?, deck: String?) -> AppModel {
+        let suite = "TypeDeckTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        if let seedVersion { defaults.set(seedVersion, forKey: "seedVersion") }
+        if let collapsed { defaults.set(collapsed, forKey: "collapsedCategories") }
+        if let deck { defaults.set(deck, forKey: "selectedDeckID") }
+        let store = FileManager.default.temporaryDirectory.appendingPathComponent("\(suite).json")
+        return AppModel(storeURL: store, defaults: defaults, bundle: Bundle(for: Session.self))
+    }
+
+    @Test func freshStartOpensOnlyTheCurrentCategory() {
+        let model = makeModel(seedVersion: nil, collapsed: nil, deck: nil)
+        let current = model.selectedDeck?.category ?? ""
+        #expect(!model.collapsedCategories.contains(current))
+        #expect(model.collapsedCategories.count == Seed.group(model.decks).count - 1)
+    }
+
+    @Test func selectedDecksCategoryIsOpenedEvenIfSavedClosed() {
+        let model = makeModel(seedVersion: Seed.version, collapsed: ["토익 고급 (900+)", "토플"], deck: "toeic-adv-05")
+        #expect(model.selectedDeckID == "toeic-adv-05")
+        #expect(model.collapsedCategories == ["토플"])
+    }
+
+    @Test func collapseAllAndSelectReveals() {
+        let model = makeModel(seedVersion: Seed.version, collapsed: [], deck: "toeic-adv-05")
+        model.setAllCategories(open: false)
+        #expect(model.allCategoriesCollapsed)
+        model.select("toefl-1")
+        #expect(!model.collapsedCategories.contains("토플"))
+        model.setAllCategories(open: true)
+        #expect(model.collapsedCategories.isEmpty)
     }
 }

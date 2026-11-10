@@ -1,4 +1,4 @@
-import { Session, InputTracker, diff, chars, migrateDecks, groupDecks, SEED_VERSION, UNCATEGORIZED } from './core.js';
+import { Session, InputTracker, diff, chars, migrateDecks, groupDecks, collapsedExcept, SEED_VERSION, UNCATEGORIZED } from './core.js';
 import { setupEditor, openEditor as openDeckEditor, closeEditor } from './editor.js';
 
 const STORE_KEY = 'typedeck.v1';
@@ -374,14 +374,17 @@ function renderDeckList() {
   const list = $('#deckList');
   list.replaceChildren();
   const collapsed = new Set(store.settings.collapsed ?? []);
-  for (const group of groupDecks(store.decks)) {
+  const groups = groupDecks(store.decks);
+  for (const group of groups) {
     const key = group.category;
     const isOpen = !collapsed.has(key);
     const section = el('div', 'deck-group');
     const head = el('button', 'group-head keep-focus');
     head.type = 'button';
     head.setAttribute('aria-expanded', String(isOpen));
-    head.append(el('span', 'chev', '›'), el('span', 'group-name', key || UNCATEGORIZED), el('span', 'count', String(group.decks.length)));
+    head.title = isOpen ? '접기' : '펼치기';
+    head.classList.toggle('has-current', group.decks.some((d) => d.id === store.settings.deckId));
+    head.append(el('span', 'chev', '›'), el('span', 'group-name', key || UNCATEGORIZED), el('span', 'count', `${group.decks.length}개`));
     head.addEventListener('click', () => toggleGroup(key));
     section.append(head);
     if (isOpen) {
@@ -396,10 +399,28 @@ function renderDeckList() {
     }
     list.append(section);
   }
+  const allClosed = groups.every((g) => collapsed.has(g.category));
+  const toggle = $('#toggleGroups');
+  toggle.textContent = allClosed ? '모두 펼치기' : '모두 접기';
+  toggle.hidden = groups.length < 2;
   const deck = currentDeck();
   $('#deckName').textContent = deck ? deck.name : 'TypeDeck';
   $('#editDeck').hidden = !deck;
   document.title = deck ? `${deck.name} · TypeDeck` : 'TypeDeck';
+}
+
+function toggleAllGroups() {
+  const keys = groupDecks(store.decks).map((g) => g.category);
+  const collapsed = new Set(store.settings.collapsed ?? []);
+  store.settings.collapsed = keys.every((k) => collapsed.has(k)) ? [] : keys;
+  save();
+  renderDeckList();
+}
+
+/** Opens the category of `deckId` so the selected deck is visible. */
+function revealDeck(deckId) {
+  const cat = (store.decks.find((d) => d.id === deckId)?.category ?? '').trim();
+  store.settings.collapsed = (store.settings.collapsed ?? []).filter((c) => c !== cat);
 }
 
 function toggleGroup(key) {
@@ -423,6 +444,7 @@ function renderControls() {
 
 function selectDeck(id) {
   store.settings.deckId = id;
+  revealDeck(id);
   save();
   renderDeckList();
   startSession();
@@ -462,6 +484,8 @@ function saveDeck(id, name, category, cards) {
     store.decks.push({ id: newId, name: name || '새 덱', category, cards });
     store.settings.deckId = newId;
   }
+  // A deck that was just saved (possibly into another category) stays in view.
+  revealDeck(id ?? store.settings.deckId);
   save();
   renderDeckList();
   startSession();
@@ -519,6 +543,7 @@ function bindUI() {
     save(); renderControls(); startSession();
   });
   $('#newDeck').addEventListener('click', () => openEditor(null));
+  $('#toggleGroups').addEventListener('click', toggleAllGroups);
   $('#editDeck').addEventListener('click', () => openEditor(store.settings.deckId));
   $('#restoreDecks').addEventListener('click', () => {
     const missing = seed.filter((d) => !store.decks.some((x) => x.id === d.id));
@@ -539,6 +564,8 @@ async function boot() {
     seed = (await res.json()).decks ?? [];
   } catch { seed = []; }
   const saved = loadSaved();
+  // Before seed 3 there were only a few decks; now only the current deck's category starts open.
+  const startCollapsed = !saved || (saved.seedVersion ?? 1) < 3;
   if (saved && Array.isArray(saved.decks)) {
     store = {
       decks: migrateDecks(saved.decks, saved.seedVersion, seed),
@@ -548,8 +575,10 @@ async function boot() {
   } else {
     store.decks = seed.map(cloneDeck);
   }
-  save();
   if (!currentDeck()) store.settings.deckId = store.decks[0]?.id ?? null;
+  if (startCollapsed) store.settings.collapsed = collapsedExcept(store.decks, store.settings.deckId);
+  revealDeck(store.settings.deckId);
+  save();
   setupSink();
   bindUI();
   renderDeckList();

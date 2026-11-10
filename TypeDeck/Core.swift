@@ -69,6 +69,12 @@ enum Seed {
 
     static let uncategorized = "미분류"
 
+    /// Every category except the one holding `deckID`: the sidebar starts with only that one open.
+    static func collapsed(except deckID: String?, in decks: [Deck]) -> Set<String> {
+        let open = decks.first { $0.id == deckID }?.category.trimmingCharacters(in: .whitespaces) ?? ""
+        return Set(decks.map { $0.category.trimmingCharacters(in: .whitespaces) }).subtracting([open])
+    }
+
     /// Groups decks by category in order of first appearance; uncategorized decks go last.
     static func group(_ decks: [Deck]) -> [(category: String, decks: [Deck])] {
         var order: [String] = []

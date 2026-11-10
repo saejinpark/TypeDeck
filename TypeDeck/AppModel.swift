@@ -96,14 +96,18 @@ final class AppModel {
         reverse = defaults.bool(forKey: Keys.reverse)
         shuffle = defaults.object(forKey: Keys.shuffle) as? Bool ?? true
         collapsedCategories = Set(defaults.stringArray(forKey: Keys.collapsed) ?? [])
+        let storedVersion = defaults.integer(forKey: Keys.seedVersion)
         if let stored = Self.loadDecks(from: storeURL) {
-            decks = Seed.migrate(stored, from: defaults.integer(forKey: Keys.seedVersion), seed: seed)
+            decks = Seed.migrate(stored, from: storedVersion, seed: seed)
         } else {
             decks = seed
         }
         defaults.set(Seed.version, forKey: Keys.seedVersion)
         let saved = defaults.string(forKey: Keys.deck)
         selectedDeckID = decks.contains { $0.id == saved } ? saved : decks.first?.id
+        // Before seed 3 there were only a few decks; now only the current deck's category starts open.
+        if storedVersion < 3 { collapsedCategories = Seed.collapsed(except: selectedDeckID, in: decks) }
+        reveal(selectedDeckID)
         save()
         startSession()
     }
@@ -138,9 +142,35 @@ final class AppModel {
 
     // MARK: Decks
 
+    // MARK: Sidebar categories
+
+    var allCategoriesCollapsed: Bool {
+        Seed.group(decks).allSatisfy { collapsedCategories.contains($0.category) }
+    }
+
+    func toggleCategory(_ category: String) {
+        if collapsedCategories.contains(category) {
+            collapsedCategories.remove(category)
+        } else {
+            collapsedCategories.insert(category)
+        }
+    }
+
+    func setAllCategories(open: Bool) {
+        collapsedCategories = open ? [] : Set(Seed.group(decks).map(\.category))
+    }
+
+    /// Opens the category holding `id` so the selected deck is visible.
+    func reveal(_ id: String?) {
+        guard let deck = decks.first(where: { $0.id == id }) else { return }
+        let category = deck.category.trimmingCharacters(in: .whitespaces)
+        if collapsedCategories.contains(category) { collapsedCategories.remove(category) }
+    }
+
     func select(_ id: String?) {
         guard id != selectedDeckID else { refocus(); return }
         selectedDeckID = id
+        reveal(id)
         defaults.set(id, forKey: Keys.deck)
         startSession()
     }
@@ -153,6 +183,7 @@ final class AppModel {
             decks[i].category = category
             decks[i].cards = cards
             save()
+            reveal(id)
             if id == selectedDeckID { startSession() }
         } else {
             let deck = Deck(id: "d" + String(Int(Date().timeIntervalSince1970 * 1000), radix: 36),

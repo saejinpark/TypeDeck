@@ -147,7 +147,7 @@ test('parseCardsDetailed counts lines it could not use', () => {
   assert.equal(r.skipped, 2);
 });
 
-import { migrateDecks, groupDecks, SEED_VERSION } from '../docs/core.js';
+import { migrateDecks, groupDecks, collapsedExcept, SEED_VERSION } from '../docs/core.js';
 
 
 test('multiple choice offers the answer and distinct distractors', () => {
@@ -240,4 +240,10 @@ test('multiple choice leaves out options that share a meaning with the answer', 
     assert.ok(!s.choices.includes('등록하다, 신청하다'));
     assert.equal(s.choices.length, 3);
   }
+});
+
+test('collapsedExcept leaves only the current deck category open', () => {
+  const decks = [{ id: 'a', category: '토익 기초' }, { id: 'b', category: '토익 기초' }, { id: 'c', category: '토플' }, { id: 'd' }];
+  assert.deepEqual(collapsedExcept(decks, 'c'), ['토익 기초', '']);
+  assert.deepEqual(collapsedExcept(decks, 'missing'), ['토익 기초', '토플']);
 });

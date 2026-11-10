@@ -40,19 +40,25 @@ struct ContentView: View {
         }
     }
 
-    private func expandedBinding(_ category: String) -> Binding<Bool> {
-        Binding(
-            get: { !model.collapsedCategories.contains(category) },
-            set: { open in
-                if open { model.collapsedCategories.remove(category) } else { model.collapsedCategories.insert(category) }
-            }
-        )
-    }
-
     private var sidebar: some View {
         List(selection: Binding(get: { model.selectedDeckID }, set: { model.select($0) })) {
+            // Headers are plain rows rather than Sections: a sidebar Section keeps its own
+            // hover-only collapse state, which fights the state kept here.
             ForEach(Seed.group(model.decks), id: \.category) { group in
-                Section(isExpanded: expandedBinding(group.category)) {
+                let isOpen = !model.collapsedCategories.contains(group.category)
+                CategoryHeader(name: group.category.isEmpty ? Seed.uncategorized : group.category,
+                               count: group.decks.count,
+                               isOpen: isOpen,
+                               hasCurrent: group.decks.contains { $0.id == model.selectedDeckID }) {
+                    withAnimation(.easeOut(duration: 0.15)) { model.toggleCategory(group.category) }
+                }
+                .padding(.top, 6)
+                .selectionDisabled()
+                .contextMenu {
+                    Button("모두 펼치기") { model.setAllCategories(open: true) }
+                    Button("모두 접기") { model.setAllCategories(open: false) }
+                }
+                if isOpen {
                     ForEach(group.decks) { deck in
                         HStack {
                             Text(deck.name).lineLimit(1)
@@ -62,15 +68,34 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                                 .monospacedDigit()
                         }
+                        .padding(.leading, 18)
                         .tag(deck.id)
                         .contextMenu {
                             Button("편집…") { model.editorTarget = .deck(deck.id) }
                             Button("삭제…", role: .destructive) { pendingDelete = deck }
                         }
                     }
-                } header: {
-                    Text(group.category.isEmpty ? Seed.uncategorized : group.category)
                 }
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if Seed.group(model.decks).count > 1 {
+                HStack {
+                    Text("덱")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button(model.allCategoriesCollapsed ? "모두 펼치기" : "모두 접기") {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            model.setAllCategories(open: model.allCategoriesCollapsed)
+                        }
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .help("모든 카테고리를 한 번에 접거나 펼칩니다 (⌥⌘← / ⌥⌘→)")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -104,6 +129,42 @@ struct ContentView: View {
             }
             .padding(12)
         }
+    }
+}
+
+/// Sidebar category row: the whole row toggles, and the chevron is always visible
+/// (the system disclosure only shows it on hover).
+private struct CategoryHeader: View {
+    let name: String
+    let count: Int
+    let isOpen: Bool
+    let hasCurrent: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    .frame(width: 12)
+                Text(name)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(hasCurrent ? .primary : .secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text("\(count)개")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help(isOpen ? "접기" : "펼치기")
+        .accessibilityLabel("\(name) 카테고리, 덱 \(count)개")
+        .accessibilityValue(isOpen ? "펼쳐짐" : "접힘")
     }
 }
 
