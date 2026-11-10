@@ -293,14 +293,48 @@ test('bundled sample decks: unique keys per category group and idioms added in v
   assert.ok(decks.every((d) => Number.isInteger(d.since)));
 });
 
-test('compactDecks shows numbered decks as a grid under their shared name', () => {
+test('compactDecks shows numbered decks as grids under their shared names', () => {
   const d = (id, name) => ({ id, name, cards: [] });
-  const r = compactDecks([d(1, '기초 Day 01'), d(2, '기초 Day 02'), d(3, '내 단어장'), d(4, '기초 Day 03')]);
-  assert.equal(r.prefix, '기초 Day');
-  assert.deepEqual(r.grid.map((g) => [g.deck.id, g.label]), [[1, '01'], [2, '02'], [4, '03']]);
-  assert.deepEqual(r.rows.map((x) => x.id), [3]);
-  // Names that do not share a part, or too few of them, stay as rows.
-  assert.deepEqual(compactDecks([d(1, '01 시제와 완료'), d(2, '02 조동사와 가정법'), d(3, '03 관계사')]).grid, []);
-  assert.deepEqual(compactDecks([d(1, 'Day 1'), d(2, 'Day 2')]).grid, []);
-  assert.deepEqual(compactDecks([d(1, '단원 첫째이야기'), d(2, '단원 둘째이야기'), d(3, '단원 셋째이야기')]).grid, [], 'labels longer than 4 characters stay as rows');
+  const view = (blocks) => blocks.map((b) => (b.kind === 'grid' ? `${b.prefix}[${b.items.map((x) => x.label).join(',')}]` : b.deck.name));
+  assert.deepEqual(view(compactDecks([d(1, '기초 Day 01'), d(2, '기초 Day 02'), d(3, '내 단어장'), d(4, '기초 Day 03')])),
+    ['기초 Day[01,02,03]', '내 단어장']);
+  // Several groups in one category, each where its first deck was.
+  assert.deepEqual(view(compactDecks([d(1, '회차 01'), d(2, '회차 02'), d(3, '회차 03'), d(4, '테스트 01'), d(5, '테스트 02'), d(6, '테스트 03')])),
+    ['회차[01,02,03]', '테스트[01,02,03]']);
+  // Two decks are enough; a single one stays a row.
+  assert.deepEqual(view(compactDecks([d(1, 'Day 1'), d(2, 'Day 2'), d(3, '단어 1')])), ['Day[1,2]', '단어 1']);
+  assert.deepEqual(view(compactDecks([d(1, '01 시제와 완료'), d(2, '02 조동사와 가정법')])), ['01 시제와 완료', '02 조동사와 가정법']);
+  assert.deepEqual(view(compactDecks([d(1, '단원 첫째이야기'), d(2, '단원 둘째이야기')])), ['단원 첫째이야기', '단원 둘째이야기'], 'labels longer than 4 characters stay as rows');
+});
+
+test('compactDecks also groups numbers stuck to the name and sorts them as numbers', () => {
+  const d = (id, name) => ({ id, name, cards: [] });
+  const [glued] = compactDecks([d(1, '정보처리기사1회'), d(2, '정보처리기사2회'), d(3, '정보처리기사3회')]);
+  assert.equal(glued.prefix, '정보처리기사');
+  assert.deepEqual(glued.items.map((g) => g.label), ['1회', '2회', '3회']);
+  assert.deepEqual(compactDecks([d(1, 'Day1'), d(2, 'Day2')])[0].items.map((g) => g.label), ['1', '2']);
+  const [order] = compactDecks([d(1, '한국사 3회'), d(2, '한국사 1회'), d(3, '한국사 10회'), d(4, '한국사 2회')]);
+  assert.deepEqual(order.items.map((g) => g.label), ['1회', '2회', '3회', '10회']);
+  assert.ok(compactDecks([d(1, '1장 개요'), d(2, '2장 네트워크'), d(3, '3장 보안')]).every((b) => b.kind === 'row'));
+});
+
+test('enterHandler: an Enter that finishes a Hangul syllable counts once', async () => {
+  const { enterHandler } = await import('../docs/keys.js');
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const ev = (extra) => ({ key: 'Enter', target: 'field', preventDefault() {}, ...extra });
+  let runs = 0;
+  const onKey = enterHandler(() => { runs++; });
+  // Chrome on macOS: only a composing Enter arrives.
+  onKey(ev({ isComposing: true, keyCode: 229 }));
+  assert.equal(runs, 0);
+  await wait(100);
+  assert.equal(runs, 1);
+  // Safari: a composing Enter, then an ordinary one right after. Still once.
+  runs = 0;
+  onKey(ev({ isComposing: false, keyCode: 229 }));
+  onKey(ev({ isComposing: false, keyCode: 13 }));
+  await wait(100);
+  assert.equal(runs, 1);
+  // Other keys are not handled.
+  assert.equal(onKey({ key: 'a' }), false);
 });

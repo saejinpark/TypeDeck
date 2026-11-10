@@ -101,6 +101,24 @@ struct ContentView: View {
         if let problem { categoryProblem = problem } else { model.refocus() }
     }
 
+    private func deckRow(_ deck: Deck) -> some View {
+        HStack {
+            Text(deck.name).lineLimit(1)
+            Spacer()
+            Text("\(deck.cards.count)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+        .padding(.leading, 18)
+        .modifier(HoverActions(actions: [.init(icon: "trash", label: "'\(deck.name)' 덱 삭제") { pendingDelete = deck }]))
+        .tag(deck.id)
+        .contextMenu {
+            Button("편집…") { model.editorTarget = .deck(deck.id) }
+            Button("삭제…", role: .destructive) { pendingDelete = deck }
+        }
+    }
+
     private var sidebar: some View {
         List(selection: Binding(get: { model.selectedDeckID }, set: { model.select($0) })) {
             // Headers are plain rows rather than Sections: a sidebar Section keeps its own
@@ -139,30 +157,17 @@ struct ContentView: View {
                     .selectionDisabled()
                 }
                 if isOpen {
-                    let compact = Seed.compact(group.decks)
-                    if !compact.grid.isEmpty {
-                        DeckGrid(prefix: compact.prefix, items: compact.grid, selectedID: model.selectedDeckID,
-                                 select: { model.select($0) },
-                                 edit: { model.editorTarget = .deck($0) },
-                                 delete: { pendingDelete = $0 })
-                            .padding(.leading, 18)
-                            .selectionDisabled()
-                    }
-                    ForEach(compact.rows) { deck in
-                        HStack {
-                            Text(deck.name).lineLimit(1)
-                            Spacer()
-                            Text("\(deck.cards.count)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                        }
-                        .padding(.leading, 18)
-                        .modifier(HoverActions(actions: [.init(icon: "trash", label: "'\(deck.name)' 덱 삭제") { pendingDelete = deck }]))
-                        .tag(deck.id)
-                        .contextMenu {
-                            Button("편집…") { model.editorTarget = .deck(deck.id) }
-                            Button("삭제…", role: .destructive) { pendingDelete = deck }
+                    ForEach(Seed.compact(group.decks)) { block in
+                        switch block {
+                        case .grid(let prefix, let items):
+                            DeckGrid(prefix: prefix, items: items, selectedID: model.selectedDeckID,
+                                     select: { model.select($0) },
+                                     edit: { model.editorTarget = .deck($0) },
+                                     delete: { pendingDelete = $0 })
+                                .padding(.leading, 18)
+                                .selectionDisabled()
+                        case .row(let deck):
+                            deckRow(deck)
                         }
                     }
                 }
@@ -174,9 +179,13 @@ struct ContentView: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             HStack(spacing: 8) {
-                Text("덱")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .frame(width: 22, height: 22)
+                    .accessibilityHidden(true)
+                Text("TypeDeck")
+                    .font(.system(size: 15, weight: .heavy))
+                    .tracking(-0.3)
                 Spacer()
                 Menu {
                     Button("새 덱") { model.editorTarget = .new }

@@ -117,36 +117,62 @@ enum Seed {
     /// Longest last word (in characters) that still counts as a short label, like "01".
     static let gridLabelMax = 4
 
-    struct Compact {
-        var prefix = ""
-        var grid: [(deck: Deck, label: String)] = []
-        var rows: [Deck] = []
+    /// Decks that share a name part form a grid from this many on.
+    static let gridMin = 2
+
+    /// One piece of a category's deck list in the sidebar.
+    enum DeckBlock: Identifiable {
+        /// Decks that differ only by a short label, shown as a grid under `prefix`.
+        case grid(prefix: String, items: [(deck: Deck, label: String)])
+        case row(Deck)
+
+        var id: String {
+            switch self {
+            case .grid(let prefix, _): return "grid:" + prefix
+            case .row(let deck): return deck.id
+            }
+        }
     }
 
-    /// Decks whose names differ only in a short last word ("기초 Day 01", "기초 Day 02", ...) are
-    /// shown as a grid of those last words under the shared part. Needs at least three such decks
-    /// with the same shared part; the other decks stay as rows, each in their original order.
-    static func compact(_ decks: [Deck]) -> Compact {
-        func split(_ name: String) -> (prefix: String, label: String)? {
-            let words = name.split(whereSeparator: \.isWhitespace).map(String.init)
-            guard words.count > 1, let label = words.last, label.count <= gridLabelMax else { return nil }
-            return (words.dropLast().joined(separator: " "), label)
+    /// Splits a deck name into a shared part and a short label: the last word ("기초 Day 01" →
+    /// "기초 Day", "01"), or a number stuck to the end ("정보처리기사1회" → "정보처리기사", "1회").
+    static func splitDeckName(_ name: String) -> (prefix: String, label: String)? {
+        let words = name.split(whereSeparator: \.isWhitespace).map(String.init)
+        if words.count > 1, let last = words.last, last.count <= gridLabelMax {
+            return (words.dropLast().joined(separator: " "), last)
         }
+        let text = name.trimmingCharacters(in: .whitespaces)
+        guard let m = text.firstMatch(of: /^(.*\D)(\d+\D{0,2})$/) else { return nil }
+        let prefix = String(m.1).trimmingCharacters(in: .whitespaces)
+        let label = String(m.2)
+        guard !prefix.isEmpty, label.count <= gridLabelMax else { return nil }
+        return (prefix, label)
+    }
+
+    /// Lays out a category's decks for the sidebar. Decks whose names differ only in a short
+    /// label ("회차 01", "회차 02" ...) form a grid of labels under the shared part, in number
+    /// order; a category can hold several such grids. Each grid sits where its first deck was,
+    /// and other decks stay as rows in their order.
+    static func compact(_ decks: [Deck]) -> [DeckBlock] {
+        let named = decks.map { ($0, splitDeckName($0.name)) }
         var counts: [String: Int] = [:]
-        var order: [String] = []
-        for d in decks {
-            guard let s = split(d.name) else { continue }
-            if counts[s.prefix] == nil { order.append(s.prefix) }
-            counts[s.prefix, default: 0] += 1
+        for (_, split) in named { if let split { counts[split.prefix, default: 0] += 1 } }
+        var blocks: [DeckBlock] = []
+        var gridIndex: [String: Int] = [:]
+        var items: [String: [(deck: Deck, label: String)]] = [:]
+        for (deck, split) in named {
+            guard let split, counts[split.prefix, default: 0] >= gridMin else { blocks.append(.row(deck)); continue }
+            if gridIndex[split.prefix] == nil {
+                gridIndex[split.prefix] = blocks.count
+                blocks.append(.grid(prefix: split.prefix, items: []))
+            }
+            items[split.prefix, default: []].append((deck, split.label))
         }
-        guard let prefix = order.max(by: { counts[$0]! < counts[$1]! }), counts[prefix]! >= 3 else {
-            return Compact(rows: decks)
+        for (prefix, index) in gridIndex {
+            let sorted = items[prefix, default: []].sorted { $0.label.localizedStandardCompare($1.label) == .orderedAscending }
+            blocks[index] = .grid(prefix: prefix, items: sorted)
         }
-        var result = Compact(prefix: prefix)
-        for d in decks {
-            if let s = split(d.name), s.prefix == prefix { result.grid.append((d, s.label)) } else { result.rows.append(d) }
-        }
-        return result
+        return blocks
     }
 
     /// Category names are trimmed and inner runs of spaces collapsed.

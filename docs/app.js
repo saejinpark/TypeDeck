@@ -1,5 +1,6 @@
 import { Session, InputTracker, diff, chars, migrateDecks, groupDecks, compactDecks, collapsedExcept, seedCategories, addSeedDecks, syncCategories, renameCategory, cleanCategory, SEED_VERSION, UNCATEGORIZED } from './core.js';
 import { setupEditor, openEditor as openDeckEditor, closeEditor } from './editor.js';
+import { enterHandler } from './keys.js';
 
 const STORE_KEY = 'typedeck.v1';
 const $ = (sel) => document.querySelector(sel);
@@ -450,24 +451,25 @@ function renderDeckList() {
       section.append(empty);
     }
     if (isOpen) {
-      const { prefix, grid, rows } = compactDecks(group.decks);
-      if (grid.length) {
-        // Decks that differ only by number: the shared part once, then a grid of numbers.
-        const wrap = el('div', 'deck-grid-wrap');
-        const cells = el('div', 'deck-grid');
-        for (const { deck, label } of grid) {
-          const b = el('button', 'deck-chip keep-focus', label);
-          b.type = 'button';
-          b.title = `${deck.name} · ${deck.cards.length}장`;
-          b.setAttribute('aria-label', deck.name);
-          b.setAttribute('aria-current', String(deck.id === store.settings.deckId));
-          b.addEventListener('click', () => selectDeck(deck.id));
-          cells.append(b);
+      for (const block of compactDecks(group.decks)) {
+        if (block.kind === 'grid') {
+          // Decks that differ only by number: the shared part once, then a grid of numbers.
+          const wrap = el('div', 'deck-grid-wrap');
+          const cells = el('div', 'deck-grid');
+          for (const { deck, label } of block.items) {
+            const b = el('button', 'deck-chip keep-focus', label);
+            b.type = 'button';
+            b.title = `${deck.name} · ${deck.cards.length}장`;
+            b.setAttribute('aria-label', deck.name);
+            b.setAttribute('aria-current', String(deck.id === store.settings.deckId));
+            b.addEventListener('click', () => selectDeck(deck.id));
+            cells.append(b);
+          }
+          wrap.append(el('div', 'deck-grid-label', block.prefix), cells);
+          section.append(wrap);
+          continue;
         }
-        wrap.append(el('div', 'deck-grid-label', prefix), cells);
-        section.append(wrap);
-      }
-      for (const deck of rows) {
+        const { deck } = block;
         const b = el('button', 'deck-item keep-focus');
         b.type = 'button';
         b.setAttribute('aria-current', String(deck.id === store.settings.deckId));
@@ -563,9 +565,9 @@ function categoryInput(key) {
     renderDeckList();
     focusSink();
   };
+  const enter = enterHandler((e) => { e.preventDefault(); finish(true); });
   input.addEventListener('keydown', (e) => {
-    if (e.isComposing || e.keyCode === 229) return;
-    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (enter(e) || e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Escape') { e.preventDefault(); finish(false); }
   });
   // Clicking elsewhere keeps a typed name; a confirm() that hands focus back does not.

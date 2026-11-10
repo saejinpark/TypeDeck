@@ -1,4 +1,5 @@
 import { parseCards, parseCardsDetailed, parseImport, serializeCards } from './core.js';
+import { enterHandler } from './keys.js';
 
 /*
  * Deck editor: a two-column list of key/value fields.
@@ -97,13 +98,12 @@ export function setupEditor() {
     if (noteBtn) toggleNote(rowIndex(noteBtn));
   });
 
-  $('#editorName').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !composingKey(e)) {
-      e.preventDefault();
-      if (e.metaKey || e.ctrlKey) return save();
-      focusCell(0, 'k');
-    }
-  });
+  // Enter after the name goes to the empty row at the end, where new cards are typed.
+  $('#editorName').addEventListener('keydown', enterHandler((e) => {
+    e.preventDefault();
+    if (e.metaKey || e.ctrlKey) return save();
+    focusCell(rows.length - 1, 'k');
+  }));
   $('#editorImport').addEventListener('click', () => $('#editorFile').click());
   $('#editorFile').addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
@@ -112,13 +112,11 @@ export function setupEditor() {
   });
   $('#editorName').addEventListener('input', () => { dirty = true; });
   $('#editorCategory').addEventListener('input', () => { dirty = true; });
-  $('#editorCategory').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !composingKey(e)) {
-      e.preventDefault();
-      if (e.metaKey || e.ctrlKey) return save();
-      $('#editorName').focus();
-    }
-  });
+  $('#editorCategory').addEventListener('keydown', enterHandler((e) => {
+    e.preventDefault();
+    if (e.metaKey || e.ctrlKey) return save();
+    $('#editorName').focus();
+  }));
   $('#editorCards').addEventListener('input', () => { dirty = true; updateCount(); });
   $('#editorCards').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
@@ -271,6 +269,19 @@ function onRowInput(e) {
   updateCount();
 }
 
+/** Enter in a card row: key → value → the next row's key. */
+const rowEnter = enterHandler((e) => {
+  const input = e.target;
+  const i = rowIndex(input);
+  if (i < 0) return;
+  e.preventDefault();
+  if (e.metaKey || e.ctrlKey) return save();
+  if (input.classList.contains('row-k')) return focusCell(i, 'v');
+  // Enter on the last row stays there until it has content.
+  if (i === rows.length - 1) return focusCell(i, 'k');
+  return focusCell(i + 1, 'k');
+});
+
 function onRowKeyDown(e) {
   const input = e.target;
   if (input.classList.contains('row-note')) {
@@ -279,20 +290,11 @@ function onRowKeyDown(e) {
     return;
   }
   if (!(input instanceof HTMLInputElement)) return;
+  if (rowEnter(e)) return;
   const i = rowIndex(input);
   const col = input.classList.contains('row-k') ? 'k' : 'v';
   if (composingKey(e)) return;
 
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    if (e.metaKey || e.ctrlKey) return save();
-    if (col === 'k') return focusCell(i, 'v');
-    if (i === rows.length - 1) {
-      // Enter on the last row does nothing until it has content.
-      return focusCell(i, 'k');
-    }
-    return focusCell(i + 1, 'k');
-  }
   if (e.key === 'ArrowDown' && i < rows.length - 1) { e.preventDefault(); return focusCell(i + 1, col); }
   if (e.key === 'ArrowUp' && i > 0) { e.preventDefault(); return focusCell(i - 1, col); }
   if (e.key === 'Backspace' && input.selectionStart === 0 && input.selectionEnd === 0) {

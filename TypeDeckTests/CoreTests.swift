@@ -477,15 +477,32 @@ struct PracticeNoteTests {
 }
 
 struct DeckGridTests {
-    @Test func numberedDecksBecomeAGridUnderTheirSharedName() {
-        func d(_ id: String, _ name: String) -> Deck { Deck(id: id, name: name, cards: []) }
-        let r = Seed.compact([d("1", "기초 Day 01"), d("2", "기초 Day 02"), d("3", "내 단어장"), d("4", "기초 Day 03")])
-        #expect(r.prefix == "기초 Day")
-        #expect(r.grid.map(\.deck.id) == ["1", "2", "4"])
-        #expect(r.grid.map(\.label) == ["01", "02", "03"])
-        #expect(r.rows.map(\.id) == ["3"])
-        #expect(Seed.compact([d("1", "01 시제와 완료"), d("2", "02 조동사와 가정법"), d("3", "03 관계사")]).grid.isEmpty)
-        #expect(Seed.compact([d("1", "Day 1"), d("2", "Day 2")]).grid.isEmpty)
-        #expect(Seed.compact([d("1", "단원 첫째이야기"), d("2", "단원 둘째이야기"), d("3", "단원 셋째이야기")]).grid.isEmpty)
+    private func d(_ id: String, _ name: String) -> Deck { Deck(id: id, name: name, cards: []) }
+
+    private func view(_ blocks: [Seed.DeckBlock]) -> [String] {
+        blocks.map { block in
+            switch block {
+            case .grid(let prefix, let items): return "\(prefix)[\(items.map(\.label).joined(separator: ","))]"
+            case .row(let deck): return deck.name
+            }
+        }
+    }
+
+    @Test func numberedDecksBecomeGridsUnderTheirSharedNames() {
+        #expect(view(Seed.compact([d("1", "기초 Day 01"), d("2", "기초 Day 02"), d("3", "내 단어장"), d("4", "기초 Day 03")]))
+                == ["기초 Day[01,02,03]", "내 단어장"])
+        #expect(view(Seed.compact([d("1", "회차 01"), d("2", "회차 02"), d("3", "회차 03"),
+                                   d("4", "테스트 01"), d("5", "테스트 02"), d("6", "테스트 03")]))
+                == ["회차[01,02,03]", "테스트[01,02,03]"], "several groups in one category")
+        #expect(view(Seed.compact([d("1", "Day 1"), d("2", "Day 2"), d("3", "단어 1")])) == ["Day[1,2]", "단어 1"])
+        #expect(view(Seed.compact([d("1", "01 시제와 완료"), d("2", "02 조동사와 가정법")])) == ["01 시제와 완료", "02 조동사와 가정법"])
+        #expect(view(Seed.compact([d("1", "단원 첫째이야기"), d("2", "단원 둘째이야기")])) == ["단원 첫째이야기", "단원 둘째이야기"])
+    }
+
+    @Test func gluedNumbersGroupAndSortAsNumbers() {
+        #expect(view(Seed.compact([d("1", "정보처리기사1회"), d("2", "정보처리기사2회"), d("3", "정보처리기사3회")])) == ["정보처리기사[1회,2회,3회]"])
+        #expect(view(Seed.compact([d("1", "Day1"), d("2", "Day2")])) == ["Day[1,2]"])
+        #expect(view(Seed.compact([d("1", "한국사 3회"), d("2", "한국사 1회"), d("3", "한국사 10회"), d("4", "한국사 2회")])) == ["한국사[1회,2회,3회,10회]"])
+        #expect(view(Seed.compact([d("1", "1장 개요"), d("2", "2장 네트워크"), d("3", "3장 보안")])) == ["1장 개요", "2장 네트워크", "3장 보안"])
     }
 }

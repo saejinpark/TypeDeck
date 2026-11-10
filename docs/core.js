@@ -398,35 +398,48 @@ export function collapsedExcept(decks, deckId) {
 export const GRID_LABEL_MAX = 4;
 
 /**
- * Decks whose names differ only in a short last word ("기초 Day 01", "기초 Day 02", ...) are shown
- * as a grid of those last words under the shared part. Needs at least three such decks with the
- * same shared part. Returns the shared part, the grid decks with their labels, and the other
- * decks (shown as rows), each in their original order.
+ * Splits a deck name into a shared part and a short label: the last word ("기초 Day 01" → "기초 Day",
+ * "01"), or a number stuck to the end ("정보처리기사1회" → "정보처리기사", "1회"). Null when there is
+ * no short label.
+ */
+export function splitDeckName(name) {
+  const text = (name ?? '').trim();
+  const words = text.split(/\s+/);
+  const last = words[words.length - 1];
+  if (words.length > 1 && chars(last).length <= GRID_LABEL_MAX) return { prefix: words.slice(0, -1).join(' '), label: last };
+  const m = /^(.*\D)(\d+\D{0,2})$/u.exec(text);
+  if (m && m[1].trim() && chars(m[2]).length <= GRID_LABEL_MAX) return { prefix: m[1].trim(), label: m[2] };
+  return null;
+}
+
+/** Decks that share a name part form a grid from this many on. */
+export const GRID_MIN = 2;
+
+/**
+ * Lays out a category's decks for the sidebar. Decks whose names differ only in a short label
+ * ("회차 01", "회차 02" ...) form a grid of labels under the shared part, in number order; a
+ * category can hold several such grids ("회차 …" and "테스트 …"). Each grid sits where its first
+ * deck was, and other decks stay as rows in their order.
+ * Returns blocks: { kind: 'grid', prefix, items: [{ deck, label }] } or { kind: 'row', deck }.
  */
 export function compactDecks(decks) {
-  const split = (name) => {
-    const words = (name ?? '').trim().split(/\s+/);
-    if (words.length < 2) return null;
-    const label = words[words.length - 1];
-    return chars(label).length <= GRID_LABEL_MAX ? { prefix: words.slice(0, -1).join(' '), label } : null;
-  };
+  const named = decks.map((deck) => ({ deck, split: splitDeckName(deck.name) }));
   const counts = new Map();
-  for (const d of decks) {
-    const s = split(d.name);
-    if (s) counts.set(s.prefix, (counts.get(s.prefix) ?? 0) + 1);
+  for (const { split } of named) if (split) counts.set(split.prefix, (counts.get(split.prefix) ?? 0) + 1);
+  const blocks = [];
+  const grids = new Map();
+  for (const { deck, split } of named) {
+    if (!split || counts.get(split.prefix) < GRID_MIN) { blocks.push({ kind: 'row', deck }); continue; }
+    let grid = grids.get(split.prefix);
+    if (!grid) {
+      grid = { kind: 'grid', prefix: split.prefix, items: [] };
+      grids.set(split.prefix, grid);
+      blocks.push(grid);
+    }
+    grid.items.push({ deck, label: split.label });
   }
-  let prefix = '';
-  let best = 0;
-  for (const [p, n] of counts) if (n > best) { prefix = p; best = n; }
-  if (best < 3) return { prefix: '', grid: [], rows: decks };
-  const grid = [];
-  const rows = [];
-  for (const d of decks) {
-    const s = split(d.name);
-    if (s && s.prefix === prefix) grid.push({ deck: d, label: s.label });
-    else rows.push(d);
-  }
-  return { prefix, grid, rows };
+  for (const grid of grids.values()) grid.items.sort((x, y) => x.label.localeCompare(y.label, 'ko', { numeric: true }));
+  return blocks;
 }
 
 /** Category names are trimmed and inner runs of spaces collapsed. */

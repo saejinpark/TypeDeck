@@ -141,7 +141,8 @@ struct DeckEditorView: View {
                     TextField("덱 이름", text: Binding(get: { name }, set: { if $0 != name { name = $0; dirty = true } }))
                         .textFieldStyle(.roundedBorder)
                         .focused($focus, equals: .name)
-                        .onSubmit { if let first = rows.rows.first { focus = .key(first.id) } }
+                        // Return after the name goes to the empty row at the end, where new cards are typed.
+                        .onSubmit { if let last = rows.rows.last { focus = .key(last.id) } }
                 }
             }
             VStack(alignment: .leading, spacing: 6) {
