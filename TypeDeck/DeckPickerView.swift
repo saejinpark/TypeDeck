@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// First-launch welcome: explains the app and offers the TOEIC decks as optional sample data.
+/// First-launch welcome: explains the app and offers the built-in decks as optional sample data.
 struct DeckPickerView: View {
     @Environment(AppModel.self) private var model
     let mode: DeckPickerMode
@@ -16,7 +16,7 @@ struct DeckPickerView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("TypeDeck에 오신 걸 환영해요")
                         .font(.title2.weight(.bold))
-                    Text("외울 것을 카드로 만들어 손으로 치면서 익혀요. 키를 보고 값을 치면 바로 다음 카드로 넘어가요. 자격증, 외국어, 용어처럼 공부할 주제마다 카테고리를 만들고 덱으로 정리하세요.\n\n먼저 써 볼 수 있게 예시로 토익 영단어장을 넣어 둘까요?")
+                    Text("외울 것을 카드로 만들어 손으로 치면서 익혀요. 키를 보고 값을 치면 바로 다음 카드로 넘어가요. 자격증, 외국어, 용어처럼 공부할 주제마다 카테고리를 만들고 덱으로 정리하세요.\n\n먼저 써 볼 수 있게 예시 덱을 넣어 둘까요?")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -57,7 +57,7 @@ struct DeckPickerView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(c.category.isEmpty ? Seed.uncategorized : c.category)
                         .font(.system(size: 14, weight: .semibold))
-                    Text("덱 \(c.decks.count)개 · \(c.words.formatted())단어")
+                    Text("덱 \(c.decks.count)개 · \(c.words.formatted())장" + (c.decks.contains { $0.cards.contains { !$0.note.isEmpty } } ? " · 해설 포함" : ""))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

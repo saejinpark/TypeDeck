@@ -7,6 +7,8 @@ struct EditorRows: Equatable {
         let id = UUID()
         var q = ""
         var a = ""
+        /// 해설; kept with the card but not needed for it to be complete.
+        var n = ""
         var isBlank: Bool { q.trimmingCharacters(in: .whitespaces).isEmpty && a.trimmingCharacters(in: .whitespaces).isEmpty }
         var isComplete: Bool { !q.trimmingCharacters(in: .whitespaces).isEmpty && !a.trimmingCharacters(in: .whitespaces).isEmpty }
         var isIncomplete: Bool { !isBlank && !isComplete }
@@ -15,13 +17,14 @@ struct EditorRows: Equatable {
     private(set) var rows: [Row]
 
     init(cards: [Card] = []) {
-        rows = cards.map { Row(q: $0.key, a: $0.value) }
+        rows = cards.map { Row(q: $0.key, a: $0.value, n: $0.note) }
         normalize()
     }
 
     var cards: [Card] {
         rows.filter(\.isComplete).map {
-            Card($0.q.trimmingCharacters(in: .whitespaces), $0.a.trimmingCharacters(in: .whitespaces))
+            Card($0.q.trimmingCharacters(in: .whitespaces), $0.a.trimmingCharacters(in: .whitespaces),
+                 note: $0.n.trimmingCharacters(in: .whitespacesAndNewlines))
         }
     }
 
@@ -30,10 +33,11 @@ struct EditorRows: Equatable {
 
     func index(of id: UUID) -> Int? { rows.firstIndex { $0.id == id } }
 
-    mutating func set(_ id: UUID, q: String? = nil, a: String? = nil) {
+    mutating func set(_ id: UUID, q: String? = nil, a: String? = nil, n: String? = nil) {
         guard let i = index(of: id) else { return }
         if let q { rows[i].q = q }
         if let a { rows[i].a = a }
+        if let n { rows[i].n = n }
         normalize()
     }
 
@@ -49,7 +53,7 @@ struct EditorRows: Equatable {
         let (cards, skipped) = Core.parseCardsDetailed(text)
         guard !cards.isEmpty, var i = index(of: id) else { return (0, skipped, nil) }
         if rows[i].isBlank { rows.remove(at: i) } else { i += 1 }
-        rows.insert(contentsOf: cards.map { Row(q: $0.key, a: $0.value) }, at: i)
+        rows.insert(contentsOf: cards.map { Row(q: $0.key, a: $0.value, n: $0.note) }, at: i)
         normalize()
         let next = rows[min(i + cards.count, rows.count - 1)].id
         return (cards.count, skipped, next)
@@ -70,7 +74,7 @@ struct DeckEditorView: View {
     let target: EditorTarget
 
     enum Mode: String, CaseIterable { case rows = "표", text = "텍스트" }
-    enum Field: Hashable { case category, name, key(UUID), value(UUID), text }
+    enum Field: Hashable { case category, name, key(UUID), value(UUID), note(UUID), text }
 
     @State private var name = ""
     @State private var category = ""
@@ -87,6 +91,8 @@ struct DeckEditorView: View {
     @AppStorage("editorKeyRatio") private var keyRatio = ColumnLayout.defaultRatio
     @State private var dragStartRatio: Double?
     @State private var dividerHover = false
+    /// Rows whose 해설 field is open.
+    @State private var openNotes: Set<UUID> = []
 
     private var deckID: String? {
         if case .deck(let id) = target { return id }
@@ -278,7 +284,56 @@ struct DeckEditorView: View {
     private func rowView(_ row: EditorRows.Row, index i: Int) -> some View {
         let isLast = i == rows.rows.count - 1
         let flagged = row.isIncomplete && focus != .key(row.id) && focus != .value(row.id)
-        return EditorColumns(keyRatio: keyRatio) {
+        let noteOpen = openNotes.contains(row.id) && !isLast
+        return VStack(alignment: .leading, spacing: 4) {
+            rowColumns(row, index: i, isLast: isLast, flagged: flagged, noteOpen: noteOpen)
+            if noteOpen { noteEditor(row) }
+        }
+    }
+
+    private func noteEditor(_ row: EditorRows.Row) -> some View {
+        TextEditor(text: Binding(get: { row.n }, set: { value in
+            guard value != row.n else { return }
+            rows.set(row.id, n: value)
+            dirty = true
+        }))
+        .font(.system(size: 13))
+        .lineSpacing(3)
+        .scrollContentBackground(.hidden)
+        .padding(6)
+        .frame(minHeight: 72, maxHeight: 220)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Palette.panel))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(focus == .note(row.id) ? Palette.accent : Palette.line,
+                                                                 lineWidth: focus == .note(row.id) ? 2 : 1))
+        .overlay(alignment: .topLeading) {
+            if row.n.isEmpty {
+                Text("해설 (문법, 표현, 외울 점…) · 연습할 때 카드 아래에 나와요")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 6)
+                    .allowsHitTesting(false)
+            }
+        }
+        .focused($focus, equals: .note(row.id))
+        .padding(.leading, ColumnLayout.number + ColumnLayout.spacing)
+        .padding(.trailing, ColumnLayout.actions + ColumnLayout.spacing)
+        .padding(.bottom, 4)
+    }
+
+    private func toggleNote(_ id: UUID) {
+        if openNotes.contains(id) {
+            openNotes.remove(id)
+            focus = .value(id)
+        } else {
+            openNotes.insert(id)
+            DispatchQueue.main.async { focus = .note(id) }
+        }
+    }
+
+    private func rowColumns(_ row: EditorRows.Row, index i: Int, isLast: Bool, flagged: Bool, noteOpen: Bool) -> some View {
+        EditorColumns(keyRatio: keyRatio) {
             Text(isLast ? "+" : "\(i + 1)")
                 .font(.system(size: isLast ? 15 : 12, weight: .semibold))
                 .foregroundStyle(isLast ? Palette.accent : Palette.muted)
@@ -294,17 +349,31 @@ struct DeckEditorView: View {
                  text: Binding(get: { row.a }, set: { update(row.id, a: $0) }),
                  flagged: flagged && row.a.trimmingCharacters(in: .whitespaces).isEmpty)
                 .onSubmit { moveDown(from: row.id, column: .value(row.id), viaReturn: true) }
-            Button {
-                remove(row.id)
-            } label: {
-                Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+            HStack(spacing: 0) {
+                Button {
+                    toggleNote(row.id)
+                } label: {
+                    Image(systemName: "text.alignleft").font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 22)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(noteOpen ? Palette.accent.opacity(0.15) : .clear))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(!row.n.isEmpty || noteOpen ? Palette.accent : Palette.muted)
+                .help(row.n.isEmpty ? "해설 쓰기" : "해설 보기")
+                .accessibilityLabel("해설")
+                Button {
+                    remove(row.id)
+                } label: {
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 22)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Palette.muted)
+                .help("카드 삭제")
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(Palette.muted)
             .frame(maxWidth: .infinity)
             .opacity(isLast ? 0 : 1)
             .disabled(isLast)
-            .help("카드 삭제")
         }
     }
 
@@ -508,7 +577,8 @@ struct DeckEditorView: View {
 /// long placeholder can no longer squeeze the key column away.
 struct ColumnLayout {
     static let number: CGFloat = 30
-    static let remove: CGFloat = 26
+    /// The 해설 and delete buttons at the end of a row.
+    static let actions: CGFloat = 52
     static let spacing: CGFloat = 6
     static let inset: CGFloat = 10
     static let defaultRatio = 0.4
@@ -521,7 +591,7 @@ struct ColumnLayout {
     static func clamp(_ ratio: Double) -> Double { min(max(ratio, minRatio), maxRatio) }
 
     /// Width shared by the key and value columns.
-    var available: CGFloat { max(0, width - 2 * Self.inset - Self.number - Self.remove - 3 * Self.spacing) }
+    var available: CGFloat { max(0, width - 2 * Self.inset - Self.number - Self.actions - 3 * Self.spacing) }
     var key: CGFloat { (available * Self.clamp(keyRatio)).rounded() }
     var value: CGFloat { available - key }
     /// Middle of the gap between the two columns, from the list's leading edge.
@@ -536,7 +606,7 @@ struct EditorColumns: Layout {
 
     private func frames(width: CGFloat) -> [CGFloat] {
         let c = ColumnLayout(width: width + 2 * ColumnLayout.inset, keyRatio: keyRatio)
-        return [ColumnLayout.number, c.key, c.value, ColumnLayout.remove]
+        return [ColumnLayout.number, c.key, c.value, ColumnLayout.actions]
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

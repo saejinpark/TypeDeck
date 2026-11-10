@@ -150,29 +150,6 @@ test('parseCardsDetailed counts lines it could not use', () => {
 import { migrateDecks, groupDecks, collapsedExcept, seedCategories, addSeedDecks, syncCategories, renameCategory, parseImport, SEED_VERSION } from '../docs/core.js';
 
 
-test('multiple choice offers the answer and distinct distractors', () => {
-  const cards = Array.from({ length: 8 }, (_, i) => [`w${i}`, `m${i}`]);
-  const s = new Session(cards, { shuffle: false, choices: 5, reverse: true });
-  assert.equal(s.current.q, 'w0', 'reverse is ignored in multiple choice');
-  assert.equal(s.choices.length, 5);
-  assert.equal(new Set(s.choices).size, 5);
-  assert.ok(s.choices.includes('m0'));
-  const wrong = s.choices.findIndex((c) => c !== 'm0');
-  assert.equal(s.choose(wrong, 0), 'wrong');
-  assert.ok(s.wrongPicks.has(wrong));
-  assert.equal(s.choose(s.answerIndex, 1), 'advance');
-  assert.equal(s.current.q, 'w1');
-  assert.equal(s.choices.length, 5);
-  assert.equal(s.missed.length, 1, 'a wrong pick counts as a miss');
-  assert.equal(s.queue.length, 9, 'and the card comes back');
-});
-
-test('multiple choice with a small deck uses what it has', () => {
-  const s = new Session([['a', '1'], ['b', '2'], ['c', '2']], { shuffle: false, choices: 5 });
-  assert.deepEqual([...s.choices].sort(), ['1', '2']);
-  assert.equal(s.choose(9, 0), 'none');
-});
-
 test('migrateDecks replaces retired built-in decks once', () => {
   const seed = [{ id: 'toeic-basic-01', name: 'T', category: '토익', cards: [['a', '1']] }, { id: 'toeic-mid-01', name: 'U', cards: [['b', '2']] }];
   const old = [{ id: 'proverbs', name: 'P', cards: [] }, { id: 'mine', name: 'M', cards: [['x', 'y']] }];
@@ -233,18 +210,6 @@ test('pasted text carries over past a short meaning', () => {
   assert.equal(s.finished, true);
 });
 
-test('multiple choice leaves out options that share a meaning with the answer', () => {
-  const cards = [['apply', '지원하다, 신청하다'], ['register', '등록하다, 신청하다'], ['hire', '고용하다'], ['fire', '해고하다']];
-  for (let seed = 0; seed < 20; seed++) {
-    let x = seed + 1;
-    const rng = () => ((x = (x * 16807) % 2147483647) / 2147483647);
-    const s = new Session(cards, { shuffle: false, choices: 5, rng });
-    assert.equal(s.current.q, 'apply');
-    assert.ok(!s.choices.includes('등록하다, 신청하다'));
-    assert.equal(s.choices.length, 3);
-  }
-});
-
 test('collapsedExcept leaves only the current deck category open', () => {
   const decks = [{ id: 'a', category: '토익 기초' }, { id: 'b', category: '토익 기초' }, { id: 'c', category: '토플' }, { id: 'd' }];
   assert.deepEqual(collapsedExcept(decks, 'c'), ['토익 기초', '']);
@@ -285,7 +250,44 @@ test('renameCategory moves decks and merges into an existing category', () => {
 test('parseImport reads CSV with quotes, TSV and plain text', () => {
   const csv = '\uFEFFapply,"지원하다, 신청하다"\nhire,고용하다\n"say ""hi""",인사\nonly\n';
   assert.deepEqual(parseImport(csv, 'w.csv'), { cards: [['apply', '지원하다, 신청하다'], ['hire', '고용하다'], ['say "hi"', '인사']], skipped: 1 });
-  assert.deepEqual(parseImport('a,b,c', 'x.csv').cards, [['a', 'b, c']]);
+  assert.deepEqual(parseImport('a,b,"해설 첫 줄\n둘째 줄"\nc,d', 'x.csv').cards, [['a', 'b', '해설 첫 줄\n둘째 줄'], ['c', 'd']]);
   assert.deepEqual(parseImport('a\t1, 2', 'x.tsv').cards, [['a', '1, 2']]);
   assert.deepEqual(parseImport('OSI 7계층 = 물리, 데이터링크', 'notes.txt').cards, [['OSI 7계층', '물리, 데이터링크']]);
+});
+
+test('notes: "> " lines after a card, kept through serialize and the session', () => {
+  const text = '나는 그를 안다. = I know him.\n> know는 상태동사라\n> 진행형으로 쓰지 않는다.\n\n고양이 = cat\n> 동물';
+  const { cards, skipped } = parseCardsDetailed(text);
+  assert.equal(skipped, 0);
+  assert.deepEqual(cards, [['나는 그를 안다.', 'I know him.', 'know는 상태동사라\n진행형으로 쓰지 않는다.'], ['고양이', 'cat', '동물']]);
+  assert.deepEqual(parseCardsDetailed(serializeCards(cards)).cards, cards);
+  assert.equal(parseCardsDetailed('> orphan').skipped, 1);
+  const s = new Session(cards, { shuffle: false });
+  assert.equal(s.current.note, 'know는 상태동사라\n진행형으로 쓰지 않는다.');
+  assert.equal(new Session([['a', 'b']], { shuffle: false }).current.note, '');
+});
+
+test('a sentence answer keeps its commas', () => {
+  assert.deepEqual(alternatives('If I had known, I would have come.'), ['If I had known, I would have come.']);
+  assert.deepEqual(alternatives('Yes, I do.'), ['Yes, I do.']);
+  assert.deepEqual(alternatives('"Wait," she said, "not yet!"'), ['"Wait," she said, "not yet!"']);
+  assert.deepEqual(alternatives('지원하다, 신청하다'), ['지원하다', '신청하다']);
+  const s = new Session([['내가 알았더라면, 왔을 텐데.', 'If I had known, I would have come.']], { shuffle: false });
+  assert.equal(s.input('If I had known,', false, 0), 'none');
+  assert.equal(s.hadError, false);
+  assert.equal(s.input('If I had known, I would have come.', false, 1), 'advance');
+});
+
+test('seed v5 adds only decks newer than the stored data, notes included', () => {
+  const seed = [
+    { id: 'toeic-basic-01', name: 'T', category: '토익', cards: [['a', '1']] },
+    { id: 'en-sent-01', name: 'S', category: '영어 문장', since: 5, cards: [['ko', 'en.', '해설']] },
+  ];
+  // A v4 user who deleted the TOEIC deck gets the sentence deck but not TOEIC back.
+  const v4 = migrateDecks([{ id: 'mine', name: 'M', cards: [] }], 4, seed);
+  assert.deepEqual(v4.map((d) => d.id), ['en-sent-01', 'mine']);
+  assert.deepEqual(v4[0].cards[0], ['ko', 'en.', '해설']);
+  // Older data gets both.
+  assert.deepEqual(migrateDecks([], 2, seed).map((d) => d.id), ['toeic-basic-01', 'en-sent-01']);
+  assert.equal(migrateDecks(v4, SEED_VERSION, seed), v4);
 });

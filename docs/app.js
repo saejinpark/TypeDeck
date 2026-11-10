@@ -11,9 +11,7 @@ const el = (tag, cls, text) => {
 };
 
 let seed = [];
-let store = { decks: [], categories: [], seedVersion: SEED_VERSION, settings: { deckId: null, mode: 'copy', reverse: false, shuffle: true, collapsed: [] } };
-const CHOICES = 5;
-const isChoice = () => store.settings.mode === 'choice';
+let store = { decks: [], categories: [], seedVersion: SEED_VERSION, settings: { deckId: null, mode: 'copy', reverse: false, shuffle: true, showNotes: true, collapsed: [] } };
 let session = null;
 let sessionCards = [];
 let sink = null;
@@ -29,7 +27,7 @@ function save() {
 function loadSaved() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY) ?? 'null'); } catch { return null; }
 }
-const cloneDeck = (d) => ({ id: d.id, name: d.name, category: d.category ?? '', cards: d.cards.map((c) => [c[0], c[1]]) });
+const cloneDeck = (d) => ({ id: d.id, name: d.name, category: d.category ?? '', cards: d.cards.map((c) => [...c]) });
 const currentDeck = () => store.decks.find((d) => d.id === store.settings.deckId) ?? null;
 
 /* ---------- input sink ----------
@@ -77,7 +75,7 @@ function compactInput(e) {
 }
 
 function onSinkInput(e) {
-  if (!session || session.finished || isChoice()) {
+  if (!session || session.finished) {
     if (!composing && e.type === 'input') { sink.value = ''; tracker.reset(); }
     return;
   }
@@ -103,12 +101,6 @@ function onSinkKeyDown(e) {
   if (handleCommandKey(e)) return;
   if (session?.finished) {
     if (e.key.length === 1) e.preventDefault();
-    return;
-  }
-  if (isChoice()) {
-    const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
-    if (m || e.key.length === 1) e.preventDefault();
-    if (m) pick(Number(m[1]) - 1);
     return;
   }
   if (e.key.length === 1 || e.key === 'Process' || e.keyCode === 229) {
@@ -146,13 +138,6 @@ function handleCommandKey(e) {
   return true;
 }
 
-function pick(i) {
-  if (!session || session.finished) return;
-  const r = session.choose(i, performance.now());
-  if (r === 'advance') showNext();
-  else if (r === 'wrong') { renderFront(); shake(); }
-}
-
 /* ---------- session ---------- */
 
 function startSession(onlyMissed = false) {
@@ -163,8 +148,7 @@ function startSession(onlyMissed = false) {
     sessionCards = deck ? deck.cards : [];
   }
   const { shuffle, reverse } = store.settings;
-  const choices = isChoice() ? CHOICES : 0;
-  session = sessionCards.length ? new Session(sessionCards, { shuffle, reverse, choices }) : null;
+  session = sessionCards.length ? new Session(sessionCards, { shuffle, reverse }) : null;
   clearInput();
   focusSink();
   renderStack();
@@ -187,56 +171,67 @@ function renderStack() {
   }
   stack.append(frontCard());
   renderStatus();
+  renderNote();
 }
 
 function frontCard() {
   const card = el('article', 'card front');
   const meta = el('div', 'card-meta');
-  const label = isChoice() ? '문제' : store.settings.reverse ? '값' : '키';
+  const label = store.settings.reverse ? '값' : '키';
   meta.append(el('span', 'pill', label), el('span', 'card-count'));
-  const q = el('div', 'q', session.current.q);
-  if (isChoice()) {
-    card.classList.add('choice-card');
-    const list = el('div', 'choices');
-    session.choices.forEach((text, i) => {
-      const b = el('button', 'choice keep-focus');
-      b.type = 'button';
-      b.append(el('kbd', '', String(i + 1)), el('span', '', text));
-      b.addEventListener('click', () => pick(i));
-      list.append(b);
-    });
-    card.append(meta, q, list);
-  } else {
-    const wrap = el('div', 'answer-wrap');
-    wrap.append(el('div', 'answer'));
-    card.append(meta, q, wrap);
-  }
+  const q = el('div', `q ${lengthClass(session.current.q, 24, 60)}`, session.current.q);
+  card.classList.add(`a-${lengthClass(session.current.a, 30, 80)}`);
+  const wrap = el('div', 'answer-wrap');
+  wrap.append(el('div', 'answer'));
+  card.append(meta, q, wrap);
   fillFront(card);
   return card;
+}
+
+/** 'long' or 'xlong' for text past the given lengths, so sentences fit on the card. */
+function lengthClass(text, long, xlong) {
+  const n = chars(text ?? '').length;
+  return n > xlong ? 'xlong' : n > long ? 'long' : 'short';
 }
 
 function renderFront() {
   const card = stackEl().querySelector('.card.front');
   if (card) fillFront(card);
+  renderNote();
+}
+
+const deckHasNotes = () => sessionCards.some((c) => c[2]);
+
+/**
+ * The 해설 panel under the card. In 따라치기 (or once the answer is shown) it explains the
+ * current card; in 외워치기 it explains the card just finished, so reading never holds up typing.
+ */
+function renderNote() {
+  const panel = $('#notePanel');
+  $('#notesBtn').hidden = !deckHasNotes();
+  const show = Boolean(session) && deckHasNotes() && store.settings.showNotes !== false;
+  panel.hidden = !show;
+  if (!show) return;
+  const live = !session.finished && (store.settings.mode === 'copy' || session.revealed);
+  const item = live ? session.current : session.lastDone;
+  $('#noteLabel').textContent = live ? '해설' : '방금 친 문장';
+  $('#noteFor').textContent = item && !live ? item.a : '';
+  const body = $('#noteBody');
+  if (!item) body.textContent = '문장을 다 치면 여기에 해설이 나와요.';
+  else body.textContent = item.note || '이 카드에는 해설이 없어요.';
+  body.classList.toggle('empty', !item?.note);
+  body.scrollTop = 0;
 }
 
 function fillFront(card) {
   const pill = card.querySelector('.pill');
   if (session.revealed) { pill.textContent = '정답 공개'; pill.classList.add('reveal'); }
   card.querySelector('.card-count').textContent = `남은 카드 ${session.remaining}`;
-  if (isChoice()) {
-    const showRight = session.revealed || session.wrongPicks.size > 0;
-    card.querySelectorAll('.choice').forEach((b, i) => {
-      b.classList.toggle('wrong', session.wrongPicks.has(i));
-      b.classList.toggle('right', showRight && i === session.answerIndex);
-    });
-    return;
-  }
   renderAnswer(card);
 }
 
 function renderAnswer(card = stackEl().querySelector('.card.front')) {
-  if (!card || !session?.current || isChoice()) return;
+  if (!card || !session?.current) return;
   const answer = card.querySelector('.answer');
   const { alts } = session.current;
   const target = session.target;
@@ -371,7 +366,7 @@ function renderStatus() {
   for (const [k, v] of [
     ['진행', `${Math.min(session.pos + 1, total)}/${total}`],
     ['정확도', pct(session.accuracy)],
-    isChoice() ? ['남음', String(session.remaining)] : ['타/분', num(session.kpm)],
+    ['타/분', num(session.kpm)],
     ['연속', String(session.streak)],
   ]) {
     const cell = el('div');
@@ -380,9 +375,7 @@ function renderStatus() {
   }
   $('#hints').innerHTML = session.finished
     ? `<kbd>Enter</kbd>다시 하기${session.missed.length ? ' &nbsp; <kbd>Tab</kbd>틀린 카드만' : ''}`
-    : isChoice()
-      ? `<kbd>1</kbd>–<kbd>${session.choices.length}</kbd>고르기 &nbsp; <kbd>Enter</kbd>정답 보기 &nbsp; <kbd>Tab</kbd>건너뛰기`
-      : '<kbd>Enter</kbd>정답 보기 &nbsp; <kbd>Tab</kbd>건너뛰기 &nbsp; <kbd>Esc</kbd>지우기';
+    : '<kbd>Enter</kbd>정답 보기 &nbsp; <kbd>Tab</kbd>건너뛰기 &nbsp; <kbd>Esc</kbd>지우기';
 }
 
 function renderDeckList() {
@@ -616,10 +609,8 @@ function renderControls() {
   for (const b of document.querySelectorAll('.segmented button')) {
     b.setAttribute('aria-checked', String(b.dataset.mode === store.settings.mode));
   }
-  $('#reverseBtn').setAttribute('aria-pressed', String(store.settings.reverse && !isChoice()));
-  $('#reverseBtn').disabled = isChoice();
-  $('#arena').classList.toggle('choice-mode', isChoice());
-  $('#reverseBtn').title = isChoice() ? '5지선다에서는 방향을 바꾸지 않아요' : '키와 값의 방향을 바꿉니다';
+  $('#reverseBtn').setAttribute('aria-pressed', String(store.settings.reverse));
+  $('#notesBtn').setAttribute('aria-pressed', String(store.settings.showNotes !== false));
   $('#shuffleBtn').setAttribute('aria-pressed', String(store.settings.shuffle));
 }
 
@@ -687,7 +678,7 @@ function openWelcome() {
   const dlg = $('#picker');
   const cats = seedCategories(seed, store.decks);
   $('#pickerTitle').textContent = 'TypeDeck에 오신 걸 환영해요';
-  $('#pickerLead').textContent = '외울 것을 카드로 만들어 손으로 치면서 익혀요. 키를 보고 값을 치면 바로 다음 카드로 넘어가요. 자격증, 외국어, 용어처럼 공부할 주제마다 카테고리를 만들고 덱으로 정리하세요. 먼저 써 볼 수 있게 예시로 토익 영단어장을 넣어 둘까요?';
+  $('#pickerLead').textContent = '외울 것을 카드로 만들어 손으로 치면서 익혀요. 키를 보고 값을 치면 바로 다음 카드로 넘어가요. 자격증, 외국어, 용어처럼 공부할 주제마다 카테고리를 만들고 덱으로 정리하세요. 먼저 써 볼 수 있게 예시 덱을 넣어 둘까요?';
   const list = $('#pickerList');
   list.replaceChildren();
   for (const c of cats) {
@@ -698,7 +689,7 @@ function openWelcome() {
     box.checked = true;
     const text = el('span', 'picker-text');
     text.append(el('b', '', c.category || UNCATEGORIZED),
-      el('small', '', `덱 ${c.decks.length}개 · ${c.words.toLocaleString('ko-KR')}단어`));
+      el('small', '', `덱 ${c.decks.length}개 · ${c.words.toLocaleString('ko-KR')}장${c.decks.some((d) => d.cards.some((x) => x[2])) ? ' · 해설 포함' : ''}`));
     row.append(box, text);
     box.addEventListener('change', update);
     list.append(row);
@@ -741,7 +732,8 @@ function bindUI() {
     if (e.target.closest('.keep-focus')) e.preventDefault();
   });
   $('#arena').addEventListener('mousedown', (e) => {
-    if (!e.target.closest('button')) { e.preventDefault(); focusSink(); }
+    // The 해설 panel can be selected and scrolled; typing still goes to the card.
+    if (!e.target.closest('button, .note-panel')) { e.preventDefault(); focusSink(); }
   });
   window.addEventListener('focus', focusSink);
 
@@ -757,17 +749,19 @@ function bindUI() {
 
   for (const b of document.querySelectorAll('.segmented button')) {
     b.addEventListener('click', () => {
-      const before = store.settings.mode;
       store.settings.mode = b.dataset.mode;
       save();
       renderControls();
-      if (before === 'choice' || store.settings.mode === 'choice') startSession();
-      else renderFront();
+      renderFront();
     });
   }
   $('#reverseBtn').addEventListener('click', () => {
     store.settings.reverse = !store.settings.reverse;
     save(); renderControls(); startSession();
+  });
+  $('#notesBtn').addEventListener('click', () => {
+    store.settings.showNotes = store.settings.showNotes === false;
+    save(); renderControls(); renderNote();
   });
   $('#shuffleBtn').addEventListener('click', () => {
     store.settings.shuffle = !store.settings.shuffle;
@@ -798,6 +792,8 @@ async function boot() {
       seedVersion: SEED_VERSION,
       settings: { ...store.settings, ...saved.settings },
     };
+    // 5지선다 was removed; anything else falls back to 따라치기.
+    if (!['copy', 'recall'].includes(store.settings.mode)) store.settings.mode = 'copy';
   } else {
     // First run: nothing is stored until the welcome dialog is answered.
     store.decks = [];

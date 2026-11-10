@@ -148,10 +148,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .toggle[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 
 /* Arena */
-.arena { position: relative; display: grid; place-items: center; padding: 12px 24px 24px; min-height: 0; overflow: hidden; cursor: text; }
+.arena { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: safe center; gap: 0; padding: 12px 24px 24px; min-height: 0; overflow-x: hidden; overflow-y: auto; cursor: text; }
 .progress { position: absolute; top: 0; left: 28px; right: 28px; height: 3px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .progress-fill { height: 100%; width: 0; background: var(--accent); transition: width 120ms linear; }
-.stack { position: relative; width: min(640px, 100%); height: 340px; margin-bottom: 26px; }
+.stack { position: relative; flex: none; width: min(640px, 100%); height: 340px; margin-bottom: 26px; }
 .card {
   position: absolute; inset: 0;
   display: flex; flex-direction: column;
@@ -182,6 +182,16 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .answer .extra { color: var(--bad); text-decoration: line-through; }
 .answer .comp, .answer .typed { color: var(--ink); }
 .answer .alt { color: var(--ghost); font-size: 0.68em; font-weight: 500; }
+/* Sentences: smaller type so a long key and answer still fit on the card. */
+.q.long { font-size: clamp(22px, 3.4vw, 30px); line-height: 1.3; }
+.q.xlong { font-size: clamp(18px, 2.6vw, 23px); line-height: 1.4; font-weight: 700; }
+.card.a-long .answer { font-size: clamp(19px, 2.8vw, 24px); }
+.card.a-xlong .answer { font-size: clamp(16px, 2.2vw, 19px); line-height: 1.45; }
+.note-panel { flex: none; width: min(640px, 100%); margin-top: 4px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); cursor: auto; }
+.note-head { display: flex; align-items: baseline; gap: 10px; padding: 12px 18px 0; font-size: 12px; font-weight: 700; color: var(--accent); }
+.note-for { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-weight: 600; font-size: 12.5px; }
+.note-body { max-height: 34dvh; overflow-y: auto; padding: 8px 18px 16px; font-size: 14.5px; line-height: 1.7; white-space: pre-wrap; color: var(--ink); user-select: text; }
+.note-body.empty { color: var(--muted); }
 .answer .comp { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 6px; }
 .caret { display: inline-block; width: 2.5px; height: 1.05em; margin: 0 -1.25px; vertical-align: -0.16em; background: var(--accent); border-radius: 2px; animation: blink 1s steps(1) 500ms infinite; }
 .arena:not(.focused) .caret { opacity: 0.25; animation: none; }
@@ -194,19 +204,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
   opacity: 0; border: 0; padding: 0; font-size: 16px; caret-color: transparent; pointer-events: none;
 }
 
-/* Multiple choice */
-.arena.choice-mode .stack { height: 420px; }
-.card.choice-card { padding-bottom: 20px; }
-.card.choice-card .q { flex: 0 0 auto; min-height: 92px; font-size: clamp(28px, 4.6vw, 40px); }
-.choices { display: flex; flex-direction: column; gap: 7px; margin-top: 6px; }
-.choice {
-  display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 14px; border-radius: 12px;
-  border: 1px solid var(--line); background: var(--panel); text-align: left; font-size: 17px; font-weight: 550; color: var(--ink);
-}
-.choice:hover { border-color: var(--muted); }
-.choice kbd { margin: 0; min-width: 24px; text-align: center; }
-.choice.wrong { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
-.choice.right { border-color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
 .toggle:disabled { opacity: 0.4; cursor: not-allowed; }
 .field-row { display: flex; gap: 12px; }
 .field-row .field { flex: 0 0 200px; }
@@ -271,7 +268,7 @@ kbd {
 .cards-tip kbd { margin-right: 3px; }
 .card-rows { position: relative; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; min-height: 0; }
 .card-rows[hidden], .field textarea[hidden] { display: none; }
-.card-rows-header, .card-row { display: grid; grid-template-columns: 34px minmax(0, var(--key-fr, 0.4fr)) minmax(0, var(--value-fr, 0.6fr)) 32px; gap: 6px; align-items: center; padding: 0 8px; }
+.card-rows-header, .card-row { display: grid; grid-template-columns: 34px minmax(0, var(--key-fr, 0.4fr)) minmax(0, var(--value-fr, 0.6fr)) 28px 28px; gap: 6px; align-items: center; padding: 0 8px; }
 .card-rows-header small { font-weight: 500; opacity: 0.75; margin-left: 4px; }
 .card-rows-header { padding-top: 8px; padding-bottom: 6px; font-size: 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .card-rows-body { overflow-y: auto; max-height: min(52dvh, 460px); padding: 6px 0; }
@@ -287,7 +284,13 @@ kbd {
 .card-row.incomplete:not(:focus-within) input:placeholder-shown { border-color: var(--bad); background: var(--bad-soft); }
 .row-del { border: 0; background: none; color: var(--muted); font-size: 18px; line-height: 1; width: 28px; height: 28px; border-radius: 8px; opacity: 0; }
 .card-row:hover .row-del, .card-row:focus-within .row-del { opacity: 1; }
-.card-row.is-new .row-del { visibility: hidden; }
+.card-row.is-new .row-del, .card-row.is-new .row-note-btn { visibility: hidden; }
+.row-note-btn { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--ghost); }
+.row-note-btn:hover { color: var(--ink); background: var(--accent-soft); }
+.card-row.has-note .row-note-btn { color: var(--accent); }
+.card-row.note-open .row-note-btn { color: var(--accent); background: var(--accent-soft); }
+.row-note { grid-column: 2 / 4; margin: 2px 0 6px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--card); color: var(--ink); font: inherit; font-size: 13.5px; line-height: 1.55; resize: vertical; min-height: 64px; }
+.row-note:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .row-del:hover { background: var(--bad-soft); color: var(--bad); }
 .editor-note { margin: -4px 0 0; min-height: 1.2em; font-size: 13px; color: var(--accent); font-weight: 500; }
 .editor-actions { display: flex; gap: 8px; align-items: center; }
@@ -296,7 +299,7 @@ kbd {
 @media (hover: none) { .row-del { opacity: 1; } }
 @media (max-width: 760px) {
   .cards-tip, .card-rows-header small { display: none; }
-  .card-rows-header, .card-row { grid-template-columns: 24px minmax(0, var(--key-fr, 0.4fr)) minmax(0, var(--value-fr, 0.6fr)) 28px; gap: 4px; padding: 0 6px; }
+  .card-rows-header, .card-row { grid-template-columns: 24px minmax(0, var(--key-fr, 0.4fr)) minmax(0, var(--value-fr, 0.6fr)) 26px 26px; gap: 4px; padding: 0 6px; }
   .card-rows-body { max-height: 46dvh; }
 }
 
@@ -319,8 +322,6 @@ kbd {
   .deck-group .deck-item { padding-left: 10px; }
   .field-row { flex-direction: column; }
   .field-row .field { flex: none; }
-  .arena.choice-mode .stack { height: 440px; }
-  .choice { font-size: 15px; padding: 9px 12px; }
   .deck-item .count { display: none; }
   .topbar { padding: 14px 16px 8px; }
   .arena { padding: 12px 16px 16px; }

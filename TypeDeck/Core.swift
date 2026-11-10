@@ -1,26 +1,31 @@
 import Foundation
 import Observation
 
-/// One key/value pair. Stored in JSON as a two-element array, the same format the web app uses.
+/// One key/value pair with an optional note (해설). Stored in JSON as `[key, value]` or
+/// `[key, value, note]`, the same format the web app uses.
 struct Card: Hashable, Codable {
     var key: String
     var value: String
+    var note: String = ""
 
-    init(_ key: String, _ value: String) {
+    init(_ key: String, _ value: String, note: String = "") {
         self.key = key
         self.value = value
+        self.note = note
     }
 
     init(from decoder: Decoder) throws {
         var c = try decoder.unkeyedContainer()
         key = try c.decode(String.self)
         value = try c.decode(String.self)
+        note = c.isAtEnd ? "" : (try c.decodeIfPresent(String.self) ?? "")
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.unkeyedContainer()
         try c.encode(key)
         try c.encode(value)
+        if !note.isEmpty { try c.encode(note) }
     }
 }
 
@@ -30,12 +35,15 @@ struct Deck: Identifiable, Hashable, Codable {
     /// One level of grouping in the sidebar. Empty means uncategorized.
     var category: String = ""
     var cards: [Card]
+    /// Built-in decks only: the seed version that brought this deck (nil means 3).
+    var since: Int?
 
-    init(id: String, name: String, category: String = "", cards: [Card]) {
+    init(id: String, name: String, category: String = "", cards: [Card], since: Int? = nil) {
         self.id = id
         self.name = name
         self.category = category
         self.cards = cards
+        self.since = since
     }
 
     init(from decoder: Decoder) throws {
@@ -44,6 +52,7 @@ struct Deck: Identifiable, Hashable, Codable {
         name = try c.decode(String.self, forKey: .name)
         category = try c.decodeIfPresent(String.self, forKey: .category) ?? ""
         cards = try c.decode([Card].self, forKey: .cards)
+        since = try c.decodeIfPresent(Int.self, forKey: .since)
     }
 }
 
@@ -55,21 +64,21 @@ struct DeckFile: Codable {
 }
 
 enum Seed {
-    static let version = 4
-    /// The last seed version that brought new built-in decks. Later versions only retire decks.
-    static let decksAdded = 3
+    static let version = 5
+    /// Seed version that first shipped a built-in deck without a `since` (the TOEIC decks).
+    static let defaultSince = 3
     /// Built-in decks from earlier versions that were removed: the original sample decks (v2), the
     /// three 50-word TOEIC decks that became the TOEIC day decks (v3) and the TOEFL decks (v4).
     static let retiredIDs: Set<String> = ["proverbs", "http-status", "git", "js-methods", "elements", "capitals",
                                           "toeic-1", "toeic-2", "toeic-3", "toefl-1", "toefl-2", "toefl-3"]
 
-    /// Drops retired built-in decks, once per seed version. Built-in decks are only added for data
-    /// older than `decksAdded`, so a deck the user deleted does not come back on an update.
+    /// Drops retired built-in decks and adds built-in decks that are newer than the stored data
+    /// (`since` is the seed version that brought a deck). A deck the user deleted is never brought
+    /// back, because it is not newer than the version they deleted it in.
     static func migrate(_ decks: [Deck], from version: Int, seed: [Deck]) -> [Deck] {
         guard version < Self.version else { return decks }
         let kept = decks.filter { !retiredIDs.contains($0.id) }
-        guard version < decksAdded else { return kept }
-        let missing = seed.filter { s in !kept.contains { $0.id == s.id } }
+        let missing = seed.filter { s in (s.since ?? defaultSince) > version && !kept.contains { $0.id == s.id } }
         return missing + kept
     }
 
@@ -184,21 +193,24 @@ enum Core {
         var cards: [Card] = []
         var skipped = 0
         let body = text.hasPrefix("\u{FEFF}") ? String(text.dropFirst()) : text
-        for raw in body.components(separatedBy: .newlines) where !raw.trimmingCharacters(in: .whitespaces).isEmpty {
-            let fields = csvFields(raw, separator: sep)
+        for fields in csvRecords(body, separator: sep) where fields.contains(where: { !$0.isEmpty }) {
             let key = fields.first ?? ""
-            let value = fields.dropFirst().filter { !$0.isEmpty }.joined(separator: ", ")
-            if !key.isEmpty && !value.isEmpty { cards.append(Card(key, value)) } else { skipped += 1 }
+            let value = fields.count > 1 ? fields[1] : ""
+            let note = fields.dropFirst(2).filter { !$0.isEmpty }.joined(separator: "\n")
+            if !key.isEmpty && !value.isEmpty { cards.append(Card(key, value, note: note)) } else { skipped += 1 }
         }
         return (cards, skipped)
     }
 
-    /// Splits one CSV line; quotes may wrap fields and "" is a literal quote.
-    private static func csvFields(_ line: String, separator: Character) -> [String] {
-        var out: [String] = []
+    /// Splits CSV text into records; quotes may wrap a field, "" is a literal quote, and a quoted
+    /// field may span lines (a long 해설 with line breaks).
+    private static func csvRecords(_ text: String, separator: Character) -> [[String]] {
+        var records: [[String]] = []
+        var fields: [String] = []
         var cur = ""
         var quoted = false
-        var chars = Array(line)[...]
+        var chars = Array(text)[...]
+        func endField() { fields.append(cur.trimmingCharacters(in: .whitespaces)); cur = "" }
         while let ch = chars.popFirst() {
             if quoted {
                 if ch == "\"" && chars.first == "\"" { cur.append("\""); chars.removeFirst() }
@@ -208,36 +220,61 @@ enum Core {
                 quoted = true
                 cur = ""
             } else if ch == separator {
-                out.append(cur)
-                cur = ""
+                endField()
+            } else if ch == "\n" || ch == "\r" || ch == "\r\n" {
+                endField()
+                records.append(fields)
+                fields = []
             } else {
                 cur.append(ch)
             }
         }
-        out.append(cur)
-        return out.map { $0.trimmingCharacters(in: .whitespaces) }
+        if !cur.isEmpty || !fields.isEmpty { endField(); records.append(fields) }
+        return records
     }
 
     static func parseCardsDetailed(_ text: String) -> (cards: [Card], skipped: Int) {
         var cards: [Card] = []
         var skipped = 0
+        var noteLines: [[String]] = []
+        var attached = false // whether "> " lines go to the last card
         for raw in text.components(separatedBy: .newlines) {
             let line = raw.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+            if line.hasPrefix(">") {
+                guard attached else { skipped += 1; continue }
+                var rest = line.dropFirst()
+                if rest.hasPrefix(" ") { rest = rest.dropFirst() }
+                noteLines[noteLines.count - 1].append(String(rest))
+                continue
+            }
+            if line.isEmpty { attached = false; continue }
+            if line.hasPrefix("#") { continue }
+            attached = false
             guard let sep = separators.first(where: { line.contains($0) }),
                   let range = line.range(of: sep) else { skipped += 1; continue }
             let key = line[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
             let value = line[range.upperBound...].trimmingCharacters(in: .whitespaces)
-            if !key.isEmpty && !value.isEmpty { cards.append(Card(key, value)) } else { skipped += 1 }
+            if !key.isEmpty && !value.isEmpty {
+                cards.append(Card(key, value))
+                noteLines.append([])
+                attached = true
+            } else {
+                skipped += 1
+            }
+        }
+        for i in cards.indices {
+            cards[i].note = noteLines[i].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return (cards, skipped)
     }
 
     static func serialize(_ cards: [Card]) -> String {
         cards.map { card in
-            card.key.contains("=") || card.key.contains(":")
+            let line = card.key.contains("=") || card.key.contains(":")
                 ? "\(card.key)\t\(card.value)"
                 : "\(card.key) = \(card.value)"
+            let notes = card.note.isEmpty ? [] : card.note.components(separatedBy: "\n").map { $0.isEmpty ? ">" : "> \($0)" }
+            return ([line] + notes).joined(separator: "\n")
         }.joined(separator: "\n")
     }
 
@@ -245,6 +282,8 @@ enum Core {
     /// them completes the card. A comma between two digits ("1,000") does not split.
     static func alternatives(_ answer: String) -> [String] {
         let s = normalize(answer).trimmingCharacters(in: .whitespaces)
+        // A sentence is one answer: its commas are part of it.
+        if s.range(of: #"[.?!][\s"')\]]*$"#, options: .regularExpression) != nil { return [s] }
         let chars = Array(s)
         var parts: [String] = []
         var current = ""
@@ -311,6 +350,8 @@ final class Session {
         let a: String
         /// Accepted answers: `a` split on commas.
         let alts: [String]
+        /// 해설 shown with the card; empty when the card has none.
+        var note: String = ""
     }
 
     enum Outcome { case none, advance, reveal, shake }
@@ -334,64 +375,21 @@ final class Session {
 
     private var cardStart: TimeInterval?
     private var requeues: [Int: Int] = [:]
+    /// The card finished most recently, for showing its 해설.
+    private(set) var lastDone: Item?
 
-    /// Multiple choice: options per card, 0 when typing. Reverse is ignored with choices.
-    let choiceCount: Int
-    private(set) var choices: [String] = []
-    private(set) var wrongPicks: Set<Int> = []
-    @ObservationIgnored private var rng: AnyRandom
-
-    convenience init(cards: [Card], shuffle: Bool = true, reverse: Bool = false, choices: Int = 0) {
+    convenience init(cards: [Card], shuffle: Bool = true, reverse: Bool = false) {
         var rng = SystemRandomNumberGenerator()
-        self.init(cards: cards, shuffle: shuffle, reverse: reverse, choices: choices, using: &rng)
+        self.init(cards: cards, shuffle: shuffle, reverse: reverse, using: &rng)
     }
 
-    init<R: RandomNumberGenerator>(cards: [Card], shuffle: Bool, reverse: Bool, choices: Int = 0, using rng: inout R) {
-        let reverse = choices > 1 ? false : reverse
-        choiceCount = choices > 1 ? choices : 0
-        self.rng = AnyRandom(rng)
+    init<R: RandomNumberGenerator>(cards: [Card], shuffle: Bool, reverse: Bool, using rng: inout R) {
         items = cards.enumerated().map { i, card in
             let answer = Core.normalize(reverse ? card.key : card.value)
-            return Item(id: i, q: reverse ? card.value : card.key, a: answer, alts: Core.alternatives(answer))
+            return Item(id: i, q: reverse ? card.value : card.key, a: answer, alts: Core.alternatives(answer), note: card.note)
         }
         let order = Array(items.indices)
         queue = shuffle ? order.shuffled(using: &rng) : order
-        self.choices = buildChoices()
-    }
-
-    /// The answer plus distractors drawn from other cards' answers, shuffled.
-    private func buildChoices() -> [String] {
-        guard choiceCount > 0, let card = current else { return [] }
-        // Options that share a meaning with the answer would also be right, so they are left out.
-        let own = Set(card.alts)
-        var seen: Set<String> = [card.a]
-        var pool: [String] = []
-        for item in items where !seen.contains(item.a) && own.isDisjoint(with: item.alts) {
-            seen.insert(item.a)
-            pool.append(item.a)
-        }
-        pool.shuffle(using: &rng)
-        var options = [card.a] + pool.prefix(choiceCount - 1)
-        options.shuffle(using: &rng)
-        return options
-    }
-
-    var answerIndex: Int? { current.flatMap { choices.firstIndex(of: $0.a) } }
-
-    enum ChoiceResult { case none, advance, wrong }
-
-    /// Picks option `index`.
-    @discardableResult
-    func choose(_ index: Int, at now: TimeInterval) -> ChoiceResult {
-        guard let card = current, choices.indices.contains(index) else { return .none }
-        if cardStart == nil { cardStart = now }
-        if choices[index] == card.a {
-            complete(at: now)
-            return .advance
-        }
-        hadError = true
-        wrongPicks.insert(index)
-        return .wrong
     }
 
     /// The accepted answer the current input is compared with.
@@ -480,6 +478,7 @@ final class Session {
 
     private func complete(at now: TimeInterval) {
         guard let card = current else { return }
+        lastDone = card
         let clean = !hadError && !revealed
         if !firstResults.contains(where: { $0.id == card.id }) {
             firstResults.append((card.id, clean))
@@ -502,8 +501,6 @@ final class Session {
         revealed = false
         hadError = false
         cardStart = nil
-        wrongPicks = []
-        choices = buildChoices()
     }
 
     var missed: [Item] {
@@ -520,13 +517,6 @@ final class Session {
         guard activeTime >= 1 else { return nil }
         return Double(keystrokes) / activeTime * 60
     }
-}
-
-/// Type-erased random number generator, so a session can keep the one it was given.
-struct AnyRandom: RandomNumberGenerator {
-    private var base: any RandomNumberGenerator
-    init(_ base: any RandomNumberGenerator) { self.base = base }
-    mutating func next() -> UInt64 { base.next() }
 }
 
 extension String {

@@ -5,7 +5,11 @@ export const chars = (s) => Array.from(s);
 
 const SEPARATORS = ['\t', ' = ', ' : ', '=', ':'];
 
-/** Parses "key = value" lines (tab, " = ", " : ", "=", ":" in that order of preference). */
+/**
+ * Parses "key = value" lines (tab, " = ", " : ", "=", ":" in that order of preference). Lines
+ * starting with ">" right after a card are that card's note (해설); cards with a note come back
+ * as [key, value, note].
+ */
 export function parseCards(text) {
   return parseCardsDetailed(text).cards;
 }
@@ -14,21 +18,33 @@ export function parseCards(text) {
 export function parseCardsDetailed(text) {
   const cards = [];
   let skipped = 0;
+  let last = null; // the card that note lines attach to
   for (const raw of (text ?? '').split(/\r?\n/)) {
     const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
+    if (line.startsWith('>')) {
+      if (!last) { skipped++; continue; }
+      const noteLine = line.slice(1).replace(/^ /, '');
+      last[2] = last[2] === undefined ? noteLine : `${last[2]}\n${noteLine}`;
+      continue;
+    }
+    if (!line || line.startsWith('#')) { if (!line) last = null; continue; }
     const sep = SEPARATORS.find((s) => line.includes(s));
     const i = sep ? line.indexOf(sep) : -1;
     const q = sep ? line.slice(0, i).trim() : '';
     const a = sep ? line.slice(i + sep.length).trim() : '';
-    if (q && a) cards.push([q, a]);
-    else skipped++;
+    if (q && a) { last = [q, a]; cards.push(last); }
+    else { skipped++; last = null; }
   }
+  for (const c of cards) if (c[2] !== undefined && !(c[2] = c[2].trim())) c.length = 2;
   return { cards, skipped };
 }
 
 export function serializeCards(cards) {
-  return cards.map(([q, a]) => (q.includes('=') || q.includes(':') ? `${q}\t${a}` : `${q} = ${a}`)).join('\n');
+  return cards.map(([q, a, note]) => {
+    const line = q.includes('=') || q.includes(':') ? `${q}\t${a}` : `${q} = ${a}`;
+    const noteLines = note ? note.split('\n').map((l) => (l ? `> ${l}` : '>')) : [];
+    return [line, ...noteLines].join('\n');
+  }).join('\n');
 }
 
 /**
@@ -60,6 +76,8 @@ export function diff(answer, typed, composing) {
  */
 export function alternatives(answer) {
   const s = normalize(answer).trim();
+  // A sentence is one answer: its commas are part of it.
+  if (/[.?!][\s"')\]]*$/.test(s)) return [s];
   const parts = s.split(/(?<!\d),|,(?!\d)/).map((p) => p.trim()).filter(Boolean);
   return parts.length > 1 ? [...new Set(parts)] : [s];
 }
@@ -93,14 +111,10 @@ export const MAX_REQUEUES = 3;
 
 /** One round through a deck. Cards that were missed come back a few cards later. */
 export class Session {
-  /** `choices` > 1 turns on multiple choice with that many options (reverse is ignored then). */
-  constructor(cards, { shuffle = true, reverse = false, rng = Math.random, choices = 0 } = {}) {
-    if (choices > 1) reverse = false;
-    this.choiceCount = choices > 1 ? choices : 0;
-    this.rng = rng;
-    this.items = cards.map(([q, a], id) => {
+  constructor(cards, { shuffle = true, reverse = false, rng = Math.random } = {}) {
+    this.items = cards.map(([q, a, note], id) => {
       const answer = normalize(reverse ? q : a);
-      return { id, q: reverse ? a : q, a: answer, alts: alternatives(answer) };
+      return { id, q: reverse ? a : q, a: answer, alts: alternatives(answer), note: note ?? '' };
     });
     const order = this.items.map((it) => it.id);
     this.queue = shuffle ? shuffled(order, rng) : order;
@@ -111,6 +125,7 @@ export class Session {
     this.activeMs = 0;
     this.streak = 0;
     this.bestStreak = 0;
+    this.lastDone = null; // the card finished most recently, for showing its 해설
     this.resetCard();
   }
 
@@ -120,36 +135,6 @@ export class Session {
     this.revealed = false;
     this.hadError = false;
     this.cardStart = null;
-    this.wrongPicks = new Set();
-    this.choices = this.choiceCount ? this.buildChoices() : [];
-  }
-
-  /** The answer plus distractors drawn from other cards' answers, shuffled. */
-  buildChoices() {
-    const card = this.current;
-    if (!card) return [];
-    // Options that share a meaning with the answer would also be right, so they are left out.
-    const own = new Set(card.alts);
-    const pool = [...new Set(this.items.filter((it) => !it.alts.some((x) => own.has(x))).map((it) => it.a))];
-    const picks = shuffled(pool, this.rng).slice(0, this.choiceCount - 1);
-    return shuffled([card.a, ...picks], this.rng);
-  }
-
-  get answerIndex() {
-    return this.current ? this.choices.indexOf(this.current.a) : -1;
-  }
-
-  /** Picks option `i`. Returns 'advance' when right, 'wrong' otherwise. */
-  choose(i, now) {
-    if (this.finished || !(i >= 0 && i < this.choices.length)) return 'none';
-    if (this.cardStart === null) this.cardStart = now;
-    if (this.choices[i] === this.current.a) {
-      this.complete(now);
-      return 'advance';
-    }
-    this.hadError = true;
-    this.wrongPicks.add(i);
-    return 'wrong';
   }
 
   /** The accepted answer the current input is compared with. */
@@ -247,6 +232,7 @@ export class Session {
 
   complete(now) {
     const card = this.current;
+    this.lastDone = card;
     const clean = !this.hadError && !this.revealed;
     if (!this.first.has(card.id)) this.first.set(card.id, clean);
     if (this.cardStart !== null) this.activeMs += Math.max(0, now - this.cardStart);
@@ -378,9 +364,9 @@ export class InputTracker {
 
 /* ---------- decks ---------- */
 
-export const SEED_VERSION = 4;
-/** The last seed version that brought new built-in decks. Later versions only retire decks. */
-export const SEED_DECKS_ADDED = 3;
+export const SEED_VERSION = 5;
+/** Seed version that first shipped a built-in deck without a `since` field (the TOEIC decks). */
+const DEFAULT_SINCE = 3;
 /**
  * Built-in decks from earlier versions that were removed: the original sample decks (v2), the
  * three 50-word TOEIC decks that became the TOEIC day decks (v3) and the TOEFL decks (v4).
@@ -391,16 +377,16 @@ export const RETIRED_SEED_IDS = [
 ];
 
 /**
- * Drops retired built-in decks, once per seed version. Built-in decks are only added for data
- * older than SEED_DECKS_ADDED, so a deck the user deleted does not come back on an update.
+ * Drops retired built-in decks and adds built-in decks that are newer than the stored data
+ * (a deck's `since` is the seed version that brought it). A deck the user deleted is never
+ * brought back, because it is not newer than the version they deleted it in.
  */
 export function migrateDecks(decks, seedVersion, seed) {
   const from = seedVersion ?? 1;
   if (from >= SEED_VERSION) return decks;
   const kept = decks.filter((d) => !RETIRED_SEED_IDS.includes(d.id));
-  if (from >= SEED_DECKS_ADDED) return kept;
-  const missing = seed.filter((s) => !kept.some((d) => d.id === s.id));
-  const clone = (d) => ({ id: d.id, name: d.name, category: d.category ?? '', cards: d.cards.map((c) => [c[0], c[1]]) });
+  const missing = seed.filter((s) => (s.since ?? DEFAULT_SINCE) > from && !kept.some((d) => d.id === s.id));
+  const clone = (d) => ({ id: d.id, name: d.name, category: d.category ?? '', cards: d.cards.map((c) => [...c]) });
   return [...missing.map(clone), ...kept];
 }
 
@@ -477,31 +463,40 @@ export function renameCategory(decks, order, from, to) {
   return { decks: nextDecks, order: syncCategories(nextOrder, nextDecks) };
 }
 
-/** Splits one CSV line into fields; quotes may wrap fields and "" is a literal quote. */
-function csvFields(line, sep) {
-  const out = [];
+/**
+ * Splits CSV text into records of fields. Quotes may wrap a field, "" is a literal quote, and a
+ * quoted field may span lines (a long 해설 with line breaks).
+ */
+function csvRecords(text, sep) {
+  const records = [];
+  let fields = [];
   let cur = '';
   let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
+  const endField = () => { fields.push(cur.trim()); cur = ''; };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
     if (quoted) {
-      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (ch === '"') quoted = false; else cur += ch;
+      if (ch === '"' && text[i + 1] === '"') { cur += '"'; i++; } else if (ch === '"') quoted = false; else cur += ch;
     } else if (ch === '"' && !cur.trim()) {
       quoted = true;
       cur = '';
     } else if (ch === sep) {
-      out.push(cur);
-      cur = '';
+      endField();
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      endField();
+      records.push(fields);
+      fields = [];
     } else cur += ch;
   }
-  out.push(cur);
-  return out.map((f) => f.trim());
+  if (cur || fields.length) { endField(); records.push(fields); }
+  return records;
 }
 
 /**
- * Reads cards from an imported file. CSV and TSV take the first two columns (a comma inside
+ * Reads cards from an imported file. CSV and TSV columns are key, value and 해설 (a comma inside
  * quotes stays in the value, so "지원하다, 신청하다" keeps both meanings); anything else uses
- * the same separators as pasting.
+ * the same separators as pasting, with "> " lines as 해설.
  */
 export function parseImport(text, fileName = '') {
   const ext = (fileName.split('.').pop() ?? '').toLowerCase();
@@ -509,12 +504,11 @@ export function parseImport(text, fileName = '') {
   const sep = ext === 'tsv' ? '\t' : ',';
   const cards = [];
   let skipped = 0;
-  for (const raw of (text ?? '').replace(/^\uFEFF/, '').split(/\r?\n/)) {
-    if (!raw.trim()) continue;
-    const [q = '', ...rest] = csvFields(raw, sep);
-    // Unquoted extra columns are treated as more meanings of the same value.
-    const a = rest.filter(Boolean).join(', ');
-    if (q && a) cards.push([q, a]);
+  for (const fields of csvRecords((text ?? '').replace(/^\uFEFF/, ''), sep)) {
+    if (fields.every((f) => !f)) continue;
+    const [q = '', a = '', ...rest] = fields;
+    const note = rest.filter(Boolean).join('\n');
+    if (q && a) cards.push(note ? [q, a, note] : [q, a]);
     else skipped++;
   }
   return { cards, skipped };

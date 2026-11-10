@@ -41,8 +41,6 @@ struct TypeDeckApp: App {
                     .keyboardShortcut("1")
                 Button("외워치기") { model.mode = .recall; model.refocus() }
                     .keyboardShortcut("2")
-                Button("5지선다") { model.mode = .choice; model.refocus() }
-                    .keyboardShortcut("3")
                 Button("방향 뒤집기") { model.reverse.toggle() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
             }

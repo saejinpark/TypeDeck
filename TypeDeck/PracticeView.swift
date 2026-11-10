@@ -15,8 +15,7 @@ struct PracticeView: View {
                     onText: { text, composing in model.handleText(text, composing: composing) },
                     onCommand: { model.handle($0) },
                     onKeystroke: { model.keystroke() },
-                    onFocusChange: { focused in model.isTypingFocused = focused },
-                    onNumberKey: { model.handleChoiceKey($0) }
+                    onFocusChange: { focused in model.isTypingFocused = focused }
                 )
                 stage
                     .frame(maxWidth: 640)
@@ -36,12 +35,15 @@ struct PracticeView: View {
                     ForEach(PracticeMode.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .help("따라치기: 정답을 보며 입력 · 외워치기: 기억해서 입력 · 5지선다: 1-5로 고르기 (⌘1, ⌘2, ⌘3)")
+                .help("따라치기: 정답을 보며 입력 · 외워치기: 기억해서 입력 (⌘1, ⌘2)")
                 Toggle(isOn: $model.reverse) { Label("뒤집기", systemImage: "arrow.left.arrow.right") }
-                    .help(model.mode == .choice ? "5지선다에서는 방향을 바꾸지 않아요" : "키와 값의 방향을 바꿉니다 (⇧⌘R)")
-                    .disabled(model.mode == .choice)
+                    .help("키와 값의 방향을 바꿉니다 (⇧⌘R)")
                 Toggle(isOn: $model.shuffle) { Label("섞기", systemImage: "shuffle") }
                     .help("카드 순서를 섞습니다")
+                if model.deckHasNotes {
+                    Toggle(isOn: $model.showNotes) { Label("해설", systemImage: "text.alignleft") }
+                        .help("카드 아래에 해설을 보여 줍니다")
+                }
                 Button {
                     if let id = model.selectedDeckID { model.editorTarget = .deck(id) }
                 } label: { Label("편집", systemImage: "square.and.pencil") }
@@ -63,7 +65,13 @@ struct PracticeView: View {
                 SummaryCard(session: session)
                     .frame(height: 340)
             } else {
-                CardStack(session: session)
+                VStack(spacing: 6) {
+                    CardStack(session: session)
+                    if model.deckHasNotes && model.showNotes {
+                        NotePanel(session: session)
+                            .padding(.top, 26) // clears the cards stacked behind the front one
+                    }
+                }
             }
         } else {
             EmptyCard()
@@ -102,7 +110,7 @@ private struct CardStack: View {
 
     var body: some View {
         let depth = min(2, session.remaining - 1)
-        let height: CGFloat = model.mode == .choice ? 420 : 340
+        let height: CGFloat = 340
         ZStack {
             ForEach((1...max(depth, 1)).reversed(), id: \.self) { d in
                 if d <= depth {
@@ -113,14 +121,7 @@ private struct CardStack: View {
                         .opacity(d == 1 ? 0.7 : 0.4)
                 }
             }
-            if let item = session.current, model.mode == .choice {
-                ChoiceCard(session: session, item: item)
-                    .id(session.pos)
-                    .transition(.asymmetric(
-                        insertion: .scale(scale: 0.975, anchor: .bottom).combined(with: .offset(y: 10)),
-                        removal: .offset(x: 60, y: -28).combined(with: .opacity)
-                    ))
-            } else if let item = session.current {
+            if let item = session.current {
                 FrontCard(session: session, item: item)
                     .id(session.pos)
                     .transition(.asymmetric(
@@ -135,6 +136,10 @@ private struct CardStack: View {
 }
 
 private struct FrontCard: View {
+    /// Long questions and answers (sentences) get smaller type so they fit on the card.
+    static func questionSize(_ text: String) -> CGFloat { text.count > 60 ? 22 : text.count > 24 ? 29 : 42 }
+    static func answerSize(_ text: String) -> CGFloat { text.count > 80 ? 19 : text.count > 30 ? 23 : 30 }
+
     @Environment(AppModel.self) private var model
     let session: Session
     let item: Session.Item
@@ -157,16 +162,17 @@ private struct FrontCard: View {
             }
             Spacer(minLength: 10)
             Text(item.q)
-                .font(.system(size: 42, weight: .bold))
-                .tracking(-0.8)
+                .font(.system(size: Self.questionSize(item.q), weight: .bold))
+                .tracking(item.q.count > 24 ? -0.3 : -0.8)
+                .lineSpacing(item.q.count > 24 ? 3 : 0)
                 .foregroundStyle(Palette.ink)
-                .lineLimit(3)
-                .minimumScaleFactor(0.5)
+                .lineLimit(4)
+                .minimumScaleFactor(0.6)
             Spacer(minLength: 10)
             DashedLine()
                 .padding(.bottom, 16)
             AnswerLine(parts: parts, alts: item.alts, target: target, typed: session.typed, showAnswer: showAnswer,
-                       awaitingReturn: session.awaitingReturn)
+                       awaitingReturn: session.awaitingReturn, size: Self.answerSize(item.a))
                 .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
         }
         .padding(.horizontal, 34)
@@ -174,70 +180,6 @@ private struct FrontCard: View {
         .padding(.bottom, 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .modifier(CardShape(border: hasError ? Palette.bad : Palette.line))
-        .offset(x: shake)
-        .onChange(of: model.shakeToken) {
-            withAnimation(.interpolatingSpring(stiffness: 900, damping: 9)) { shake = 9 }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-                withAnimation(.interpolatingSpring(stiffness: 900, damping: 9)) { shake = 0 }
-            }
-        }
-    }
-}
-
-private struct ChoiceCard: View {
-    @Environment(AppModel.self) private var model
-    let session: Session
-    let item: Session.Item
-    @State private var shake: CGFloat = 0
-
-    var body: some View {
-        let showRight = session.revealed || !session.wrongPicks.isEmpty
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Pill(text: session.revealed ? "정답 공개" : "문제", highlighted: session.revealed)
-                Spacer()
-                Text("남은 카드 \(session.remaining)")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Palette.muted)
-                    .monospacedDigit()
-            }
-            Text(item.q)
-                .font(.system(size: 38, weight: .bold))
-                .tracking(-0.8)
-                .foregroundStyle(Palette.ink)
-                .lineLimit(2)
-                .minimumScaleFactor(0.5)
-                .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
-            VStack(spacing: 7) {
-                ForEach(Array(session.choices.enumerated()), id: \.offset) { i, text in
-                    let wrong = session.wrongPicks.contains(i)
-                    let right = showRight && i == session.answerIndex
-                    Button { model.choose(i) } label: {
-                        HStack(spacing: 12) {
-                            KeyCap(label: "\(i + 1)")
-                            Text(text)
-                                .font(.system(size: 17, weight: .medium))
-                                .foregroundStyle(wrong ? Palette.bad : Palette.ink)
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 12)
-                            .fill(wrong ? Palette.bad.opacity(0.14) : right ? Palette.good.opacity(0.14) : Palette.panel))
-                        .overlay(RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(wrong ? Palette.bad : right ? Palette.good : Palette.line))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .padding(.horizontal, 30)
-        .padding(.top, 26)
-        .padding(.bottom, 22)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .modifier(CardShape())
         .offset(x: shake)
         .onChange(of: model.shakeToken) {
             withAnimation(.interpolatingSpring(stiffness: 900, damping: 9)) { shake = 9 }
@@ -267,6 +209,48 @@ private struct DashedLine: View {
     }
 }
 
+/// 해설 under the card. In 따라치기 (or once the answer is shown) it explains the current card;
+/// in 외워치기 it explains the card just finished, so reading never holds up typing.
+private struct NotePanel: View {
+    @Environment(AppModel.self) private var model
+    let session: Session
+
+    var body: some View {
+        let live = !session.finished && (model.mode == .copy || session.revealed)
+        let item = live ? session.current : session.lastDone
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(live ? "해설" : "방금 친 문장")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Palette.accent)
+                if let item, !live {
+                    Text(item.a)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Palette.muted)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            ScrollView {
+                Text(item.map { $0.note.isEmpty ? "이 카드에는 해설이 없어요." : $0.note } ?? "문장을 다 치면 여기에 해설이 나와요.")
+                    .font(.system(size: 14))
+                    .lineSpacing(5)
+                    .foregroundStyle(item?.note.isEmpty == false ? Palette.ink : Palette.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .id(item?.id)
+            .scrollIndicators(.automatic)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        // Takes what is left under the card (up to 240pt) and scrolls; never pushes the window.
+        .frame(maxWidth: .infinity, minHeight: 70, maxHeight: 240, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 16).fill(Palette.panel))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Palette.line))
+    }
+}
+
 private struct AnswerLine: View {
     @Environment(AppModel.self) private var model
     let parts: [CharDiff]
@@ -277,14 +261,15 @@ private struct AnswerLine: View {
     let showAnswer: Bool
     var awaitingReturn = false
 
-    private static let size: CGFloat = 30
+    /// Type size; smaller for sentences so they fit on the card.
+    var size: CGFloat = 30
 
     var body: some View {
         TimelineView(.periodic(from: model.lastInput, by: 0.53)) { context in
             let phase = Int(context.date.timeIntervalSince(model.lastInput) / 0.53)
             let caretOn = model.isTypingFocused && phase % 2 == 0
             Text(attributed(caretOn: caretOn, caretDim: !model.isTypingFocused))
-                .font(.system(size: Self.size, weight: .medium))
+                .font(.system(size: size, weight: .medium))
                 .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -293,7 +278,7 @@ private struct AnswerLine: View {
     private func caret(on: Bool, dim: Bool) -> AttributedString {
         var c = AttributedString("|")
         c.foregroundColor = on ? Palette.accent : (dim ? Palette.accent.opacity(0.25) : .clear)
-        c.font = .system(size: Self.size, weight: .light)
+        c.font = .system(size: size, weight: .light)
         c.kern = -4
         return c
     }
@@ -313,14 +298,14 @@ private struct AnswerLine: View {
             if typed.isEmpty {
                 var hint = AttributedString("  기억나는 대로 입력")
                 hint.foregroundColor = Palette.ghost
-                hint.font = .system(size: Self.size * 0.6, weight: .medium)
+                hint.font = .system(size: size * 0.6, weight: .medium)
                 out += hint
             }
         }
         if awaitingReturn {
             var hint = AttributedString("  ↩ Return으로 넘기기")
             hint.foregroundColor = Palette.accent
-            hint.font = .system(size: Self.size * 0.5, weight: .semibold)
+            hint.font = .system(size: size * 0.5, weight: .semibold)
             out += hint
         }
         return out
@@ -329,7 +314,7 @@ private struct AnswerLine: View {
     private func muted(_ text: String) -> AttributedString {
         var run = AttributedString(text)
         run.foregroundColor = Palette.ghost
-        run.font = .system(size: Self.size * 0.68, weight: .regular)
+        run.font = .system(size: size * 0.68, weight: .regular)
         return run
     }
 
@@ -463,20 +448,12 @@ private struct StatusBar: View {
             if let s = model.session {
                 stat("진행", "\(min(s.pos + 1, s.queue.count))/\(s.queue.count)")
                 stat("정확도", percent(s.accuracy))
-                if model.mode == .choice {
-                    stat("남음", "\(s.remaining)")
-                } else {
-                    stat("타/분", number(s.kpm))
-                }
+                stat("타/분", number(s.kpm))
                 stat("연속", "\(s.streak)")
                 Spacer()
                 if s.finished {
                     hint("return", "다시 하기")
                     if !s.missed.isEmpty { hint("tab", "틀린 카드만") }
-                } else if model.mode == .choice {
-                    hint("1–\(s.choices.count)", "고르기")
-                    hint("return", "정답 보기")
-                    hint("tab", "건너뛰기")
                 } else {
                     hint("return", "정답 보기")
                     hint("tab", "건너뛰기")

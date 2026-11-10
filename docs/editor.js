@@ -8,7 +8,7 @@ import { parseCards, parseCardsDetailed, parseImport, serializeCards } from './c
 
 const $ = (sel) => document.querySelector(sel);
 
-let rows = []; // [{ q, a }], the last one is always the empty "new card" row
+let rows = []; // [{ q, a, n, open }], n is the 해설; the last row is always the empty "new card" row
 let view = 'rows';
 let onSave = null;
 let onDelete = null;
@@ -16,6 +16,9 @@ let dirty = false;
 let warnedIncomplete = false;
 
 const isBlank = (r) => !r.q.trim() && !r.a.trim();
+const toRow = ([q, a, n]) => ({ q, a, n: n ?? '', open: false });
+const toCard = (r) => (r.n.trim() ? [r.q.trim(), r.a.trim(), r.n.trim()] : [r.q.trim(), r.a.trim()]);
+const blankRow = () => ({ q: '', a: '', n: '', open: false });
 const isComplete = (r) => r.q.trim() && r.a.trim();
 const isIncomplete = (r) => !isBlank(r) && !isComplete(r);
 const composingKey = (e) => e.isComposing || e.keyCode === 229;
@@ -90,6 +93,8 @@ export function setupEditor() {
   body.addEventListener('click', (e) => {
     const del = e.target.closest('.row-del');
     if (del) removeRow(rowIndex(del), 'k');
+    const noteBtn = e.target.closest('.row-note-btn');
+    if (noteBtn) toggleNote(rowIndex(noteBtn));
   });
 
   $('#editorName').addEventListener('keydown', (e) => {
@@ -146,7 +151,7 @@ export function openEditor(deck, handlers) {
   $('#editorTitle').textContent = deck ? '덱 편집' : '새 덱';
   $('#editorName').value = deck ? deck.name : '';
   $('#editorDelete').hidden = !deck;
-  rows = (deck?.cards ?? []).map(([q, a]) => ({ q, a }));
+  rows = (deck?.cards ?? []).map(toRow);
   ensureTrailingBlank();
   note('');
   view = 'rows';
@@ -173,7 +178,7 @@ function requestClose() {
 
 function ensureTrailingBlank() {
   while (rows.length > 1 && isBlank(rows[rows.length - 1]) && isBlank(rows[rows.length - 2])) rows.pop();
-  if (!rows.length || !isBlank(rows[rows.length - 1])) rows.push({ q: '', a: '' });
+  if (!rows.length || !isBlank(rows[rows.length - 1])) rows.push(blankRow());
 }
 
 function rowEl(row, i) {
@@ -183,9 +188,19 @@ function rowEl(row, i) {
     <span class="row-num"></span>
     <input class="row-k" autocomplete="off" spellcheck="false" aria-label="키">
     <input class="row-v" autocomplete="off" spellcheck="false" aria-label="값">
+    <button type="button" class="row-note-btn" tabindex="-1" aria-label="해설" title="해설 쓰기 · 보기"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3 4h10M3 8h10M3 12h6"/></svg></button>
     <button type="button" class="row-del" tabindex="-1" aria-label="카드 삭제" title="카드 삭제">×</button>`;
   el.querySelector('.row-k').value = row.q;
   el.querySelector('.row-v').value = row.a;
+  if (row.open) {
+    const area = document.createElement('textarea');
+    area.className = 'row-note';
+    area.rows = 3;
+    area.placeholder = '해설 (문법, 표현, 외울 점…) · 연습할 때 카드 아래에 나와요';
+    area.value = row.n;
+    el.append(area);
+    requestAnimationFrame(() => fitNote(area));
+  }
   decorate(el, row, i);
   return el;
 }
@@ -197,6 +212,25 @@ function decorate(el, row, i) {
   el.querySelector('.row-v').placeholder = last ? (i === 0 ? '값 (여러 개면 쉼표로: 지원하다, 신청하다)' : '값 (쉼표로 여러 개)') : '값';
   el.classList.toggle('is-new', last);
   el.classList.toggle('incomplete', isIncomplete(row));
+  el.classList.toggle('has-note', Boolean(row.n.trim()));
+  el.classList.toggle('note-open', row.open);
+}
+
+function fitNote(area) {
+  area.style.height = 'auto';
+  area.style.height = `${Math.min(area.scrollHeight + 2, 320)}px`;
+}
+
+/** Opens or closes the 해설 field under row `i`. */
+function toggleNote(i) {
+  const row = rows[i];
+  if (!row || i === rows.length - 1) return;
+  row.open = !row.open;
+  const body = $('#rowsBody');
+  const el = rowEl(row, i);
+  body.replaceChild(el, body.children[i]);
+  if (row.open) el.querySelector('.row-note').focus();
+  else focusCell(i, 'v');
 }
 
 function renderRows() {
@@ -223,13 +257,14 @@ function focusCell(i, col, caret = 'end') {
 function onRowInput(e) {
   const i = rowIndex(e.target);
   if (i < 0) return;
-  const field = e.target.classList.contains('row-k') ? 'q' : 'a';
+  const field = e.target.classList.contains('row-k') ? 'q' : e.target.classList.contains('row-note') ? 'n' : 'a';
   rows[i][field] = e.target.value;
+  if (field === 'n') fitNote(e.target);
   dirty = true;
   const body = $('#rowsBody');
   if (i === rows.length - 1 && !isBlank(rows[i])) {
     // Typing in the empty last row turns it into a card and adds a new empty row.
-    rows.push({ q: '', a: '' });
+    rows.push(blankRow());
     body.append(rowEl(rows[rows.length - 1], rows.length - 1));
   }
   decorate(body.children[i], rows[i], i);
@@ -238,6 +273,11 @@ function onRowInput(e) {
 
 function onRowKeyDown(e) {
   const input = e.target;
+  if (input.classList.contains('row-note')) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !composingKey(e)) { e.preventDefault(); save(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); toggleNote(rowIndex(input)); }
+    return;
+  }
   if (!(input instanceof HTMLInputElement)) return;
   const i = rowIndex(input);
   const col = input.classList.contains('row-k') ? 'k' : 'v';
@@ -267,7 +307,7 @@ function onRowKeyDown(e) {
 
 function removeRow(i, then) {
   if (i < 0 || i >= rows.length) return;
-  if (i === rows.length - 1) { rows[i] = { q: '', a: '' }; }
+  if (i === rows.length - 1) { rows[i] = blankRow(); }
   else rows.splice(i, 1);
   dirty = true;
   ensureTrailingBlank();
@@ -284,7 +324,7 @@ function importFile(fileName, text) {
     return;
   }
   if (view === 'text') setView('rows');
-  rows = rows.filter((r) => !isBlank(r)).concat(cards.map(([q, a]) => ({ q, a })));
+  rows = rows.filter((r) => !isBlank(r)).concat(cards.map(toRow));
   ensureTrailingBlank();
   renderRows();
   if (!$('#editorName').value.trim()) $('#editorName').value = fileName.replace(/\.[^.]+$/, '');
@@ -310,7 +350,7 @@ function onRowPaste(e) {
   // Fill the current row if it is empty, then insert the rest after it.
   const insertAt = isBlank(rows[i]) ? i : i + 1;
   if (isBlank(rows[i])) rows.splice(i, 1);
-  rows.splice(insertAt, 0, ...cards.map(([q, a]) => ({ q, a })));
+  rows.splice(insertAt, 0, ...cards.map(toRow));
   dirty = true;
   ensureTrailingBlank();
   renderRows();
@@ -322,7 +362,7 @@ function onRowPaste(e) {
 
 function currentCards() {
   if (view === 'text') return parseCards($('#editorCards').value);
-  return rows.filter(isComplete).map((r) => [r.q.trim(), r.a.trim()]);
+  return rows.filter(isComplete).map(toCard);
 }
 
 function updateCount() {
@@ -334,9 +374,9 @@ function updateCount() {
 function setView(next) {
   if (next === view) return;
   if (next === 'text') {
-    $('#editorCards').value = serializeCards(rows.filter(isComplete).map((r) => [r.q.trim(), r.a.trim()]));
+    $('#editorCards').value = serializeCards(rows.filter(isComplete).map(toCard));
   } else {
-    rows = parseCards($('#editorCards').value).map(([q, a]) => ({ q, a }));
+    rows = parseCards($('#editorCards').value).map(toRow);
     ensureTrailingBlank();
     renderRows();
   }

@@ -2,13 +2,12 @@ import Foundation
 import Observation
 
 enum PracticeMode: String, CaseIterable, Identifiable {
-    case copy, recall, choice
+    case copy, recall
     var id: String { rawValue }
     var title: String {
         switch self {
         case .copy: return "따라치기"
         case .recall: return "외워치기"
-        case .choice: return "5지선다"
         }
     }
 }
@@ -67,10 +66,8 @@ final class AppModel {
     var mode: PracticeMode {
         didSet {
             defaults.set(mode.rawValue, forKey: Keys.mode)
-            if (oldValue == .choice) != (mode == .choice) { startSession() }
         }
     }
-    static let choiceCount = 5
     var collapsedCategories: Set<String> {
         didSet { defaults.set(Array(collapsedCategories), forKey: Keys.collapsed) }
     }
@@ -80,6 +77,12 @@ final class AppModel {
     var shuffle: Bool {
         didSet { defaults.set(shuffle, forKey: Keys.shuffle); startSession() }
     }
+    /// Shows the 해설 panel under the card when the deck has notes.
+    var showNotes: Bool {
+        didSet { defaults.set(showNotes, forKey: Keys.showNotes) }
+    }
+    /// Whether any card being practiced has a 해설.
+    var deckHasNotes: Bool { sessionCards.contains { !$0.note.isEmpty } }
 
     var editorTarget: EditorTarget?
 
@@ -112,7 +115,7 @@ final class AppModel {
 
     private enum Keys {
         static let deck = "selectedDeckID", mode = "mode", reverse = "reverse", shuffle = "shuffle"
-        static let seedVersion = "seedVersion", collapsed = "collapsedCategories"
+        static let seedVersion = "seedVersion", collapsed = "collapsedCategories", showNotes = "showNotes"
     }
 
     init(storeURL: URL? = AppModel.defaultStoreURL, defaults: UserDefaults = .standard, bundle: Bundle = .main) {
@@ -122,6 +125,7 @@ final class AppModel {
         mode = PracticeMode(rawValue: defaults.string(forKey: Keys.mode) ?? "") ?? .copy
         reverse = defaults.bool(forKey: Keys.reverse)
         shuffle = defaults.object(forKey: Keys.shuffle) as? Bool ?? true
+        showNotes = defaults.object(forKey: Keys.showNotes) as? Bool ?? true
         collapsedCategories = Set(defaults.stringArray(forKey: Keys.collapsed) ?? [])
         let storedVersion = defaults.integer(forKey: Keys.seedVersion)
         let stored = Self.loadFile(from: storeURL)
@@ -314,8 +318,7 @@ final class AppModel {
         } else {
             sessionCards = selectedDeck?.cards ?? []
         }
-        session = sessionCards.isEmpty ? nil : Session(cards: sessionCards, shuffle: shuffle, reverse: reverse,
-                                                        choices: mode == .choice ? Self.choiceCount : 0)
+        session = sessionCards.isEmpty ? nil : Session(cards: sessionCards, shuffle: shuffle, reverse: reverse)
         resetToken += 1
         refocus()
     }
@@ -328,27 +331,12 @@ final class AppModel {
 
     /// Returns the text to keep in the input when the card was completed, nil otherwise.
     func handleText(_ text: String, composing: Bool) -> String? {
-        guard let session, !session.finished, mode != .choice else { return "" }
+        guard let session, !session.finished else { return "" }
         lastInput = Date()
         let result = session.feed(text, composing: composing, at: now)
         return result.advanced > 0 ? result.rest : nil
     }
 
-    /// Number keys in multiple choice. Returns false when the key should be typed instead.
-    func handleChoiceKey(_ number: Int) -> Bool {
-        guard mode == .choice, let session, !session.finished else { return false }
-        choose(number - 1)
-        return true
-    }
-
-    func choose(_ index: Int) {
-        guard let session else { return }
-        lastInput = Date()
-        if session.choose(index, at: now) == .wrong { shakeToken += 1 }
-    }
-
-    /// Returns true when the input buffer should be cleared because the card advanced.
-    @discardableResult
     func handle(_ command: TypingInputView.Command) -> Bool {
         guard let session else { return false }
         lastInput = Date()

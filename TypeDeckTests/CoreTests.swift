@@ -142,30 +142,7 @@ struct EditorRowsTests {
     }
 }
 
-struct ChoiceAndSeedTests {
-    @Test func multipleChoiceOffersAnswerAndDistinctDistractors() {
-        let cards = (0..<8).map { Card("w\($0)", "m\($0)") }
-        let s = Session(cards: cards, shuffle: false, reverse: true, choices: 5)
-        #expect(s.current?.q == "w0", "reverse is ignored in multiple choice")
-        #expect(s.choices.count == 5)
-        #expect(Set(s.choices).count == 5)
-        #expect(s.choices.contains("m0"))
-        let wrong = s.choices.firstIndex { $0 != "m0" }!
-        #expect(s.choose(wrong, at: 0) == .wrong)
-        #expect(s.wrongPicks.contains(wrong))
-        #expect(s.choose(s.answerIndex!, at: 1) == .advance)
-        #expect(s.current?.q == "w1")
-        #expect(s.choices.count == 5)
-        #expect(s.missed.count == 1)
-        #expect(s.queue.count == 9)
-    }
-
-    @Test func smallDeckUsesWhatItHas() {
-        let s = Session(cards: [Card("a", "1"), Card("b", "2"), Card("c", "2")], shuffle: false, choices: 5)
-        #expect(s.choices.sorted() == ["1", "2"])
-        #expect(s.choose(9, at: 0) == .none)
-    }
-
+struct SeedTests {
     @Test func migrationReplacesRetiredDecksOnce() {
         let seed = [Deck(id: "toeic-basic-01", name: "T", category: "토익", cards: [Card("a", "1")]),
                     Deck(id: "toeic-mid-01", name: "U", cards: [Card("b", "2")])]
@@ -254,15 +231,6 @@ struct MultipleMeaningTests {
         #expect(s.finished)
     }
 
-    @Test func choicesLeaveOutOptionsSharingAMeaning() {
-        let cards = [Card("apply", "지원하다, 신청하다"), Card("register", "등록하다, 신청하다"),
-                     Card("hire", "고용하다"), Card("fire", "해고하다")]
-        for _ in 0..<20 {
-            let s = Session(cards: cards, shuffle: false, choices: 5)
-            #expect(!s.choices.contains("등록하다, 신청하다"))
-            #expect(s.choices.count == 3)
-        }
-    }
 }
 
 @MainActor
@@ -333,9 +301,9 @@ struct ColumnLayoutTests {
         let c = ColumnLayout(width: 640, keyRatio: 0.4)
         #expect(c.key + c.value == c.available)
         #expect(abs(c.key - c.available * 0.4) <= 1)
-        #expect(c.available == 546)
-        #expect(ColumnLayout(width: 640, keyRatio: 0).key == 82, "never narrower than 15%")
-        #expect(ColumnLayout(width: 640, keyRatio: 2).key == 437, "never wider than 80%")
+        #expect(c.available == 520)
+        #expect(ColumnLayout(width: 640, keyRatio: 0).key == 78, "never narrower than 15%")
+        #expect(ColumnLayout(width: 640, keyRatio: 2).key == 416, "never wider than 80%")
         #expect(c.dividerX > ColumnLayout.inset + ColumnLayout.number + c.key)
     }
 }
@@ -365,7 +333,7 @@ struct CategoryListTests {
         let r = Core.parseImport(csv, fileName: "w.csv")
         #expect(r.cards == [Card("apply", "지원하다, 신청하다"), Card("hire", "고용하다"), Card("say \"hi\"", "인사")])
         #expect(r.skipped == 1)
-        #expect(Core.parseImport("a,b,c", fileName: "x.CSV").cards == [Card("a", "b, c")])
+        #expect(Core.parseImport("a,b,\"해설 첫 줄\n둘째 줄\"\nc,d", fileName: "x.CSV").cards == [Card("a", "b", note: "해설 첫 줄\n둘째 줄"), Card("c", "d")])
         #expect(Core.parseImport("a\t1, 2", fileName: "x.tsv").cards == [Card("a", "1, 2")])
         #expect(Core.parseImport("OSI 7계층 = 물리, 데이터링크", fileName: "notes.txt").cards == [Card("OSI 7계층", "물리, 데이터링크")])
     }
@@ -414,5 +382,65 @@ struct CategoryModelTests {
         #expect(draft.category == "한국사")
         #expect(draft.name == "\(suite) 조선 왕")
         #expect(draft.cards == [Card("태조", "이성계"), Card("세종", "이도, 한글 창제")])
+    }
+}
+
+struct NoteTests {
+    @Test func notesFollowTheirCardAndRoundTrip() throws {
+        let text = "나는 그를 안다. = I know him.\n> know는 상태동사라\n> 진행형으로 쓰지 않는다.\n\n고양이 = cat\n> 동물"
+        let r = Core.parseCardsDetailed(text)
+        #expect(r.skipped == 0)
+        #expect(r.cards == [Card("나는 그를 안다.", "I know him.", note: "know는 상태동사라\n진행형으로 쓰지 않는다."), Card("고양이", "cat", note: "동물")])
+        #expect(Core.parseCards(Core.serialize(r.cards)) == r.cards)
+        #expect(Core.parseCardsDetailed("> orphan").skipped == 1)
+        let json = try JSONEncoder().encode(r.cards)
+        #expect(try JSONDecoder().decode([Card].self, from: json) == r.cards)
+        #expect(String(decoding: try JSONEncoder().encode([Card("a", "b")]), as: UTF8.self) == #"[["a","b"]]"#)
+        let s = Session(cards: r.cards, shuffle: false)
+        #expect(s.current?.note == "know는 상태동사라\n진행형으로 쓰지 않는다.")
+    }
+
+    @Test func sentenceAnswersKeepTheirCommas() {
+        #expect(Core.alternatives("If I had known, I would have come.") == ["If I had known, I would have come."])
+        #expect(Core.alternatives("Yes, I do.") == ["Yes, I do."])
+        #expect(Core.alternatives("지원하다, 신청하다") == ["지원하다", "신청하다"])
+        let s = Session(cards: [Card("내가 알았더라면, 왔을 텐데.", "If I had known, I would have come.")], shuffle: false)
+        #expect(!s.input("If I had known,", composing: false, at: 0))
+        #expect(!s.hadError)
+        #expect(s.input("If I had known, I would have come.", composing: false, at: 1))
+    }
+}
+
+struct EditorNoteTests {
+    @Test func notesSurviveEditingRows() {
+        var rows = EditorRows(cards: [Card("k", "v", note: "해설")])
+        #expect(rows.cards == [Card("k", "v", note: "해설")])
+        rows.set(rows.rows[0].id, n: "  고친 해설\n둘째 줄  ")
+        #expect(rows.cards == [Card("k", "v", note: "고친 해설\n둘째 줄")])
+        let pasted = rows.paste("a = b\n> 붙여 넣은 해설", at: rows.rows[1].id)
+        #expect(pasted.added == 1)
+        #expect(rows.cards.last == Card("a", "b", note: "붙여 넣은 해설"))
+    }
+}
+
+struct SeedV5Tests {
+    @Test func onlyNewerBuiltInDecksAreAdded() {
+        let seed = [Deck(id: "toeic-basic-01", name: "T", category: "토익", cards: [Card("a", "1")]),
+                    Deck(id: "en-sent-01", name: "S", category: "영어 문장", cards: [Card("ko", "en.", note: "해설")], since: 5)]
+        let v4 = Seed.migrate([Deck(id: "mine", name: "M", cards: [])], from: 4, seed: seed)
+        #expect(v4.map(\.id) == ["en-sent-01", "mine"])
+        #expect(v4[0].cards[0].note == "해설")
+        #expect(Seed.migrate([], from: 2, seed: seed).map(\.id) == ["toeic-basic-01", "en-sent-01"])
+    }
+
+    @Test func bundledSentenceDecksHaveNotesAndUnsplitAnswers() throws {
+        let url = try #require(Bundle(for: Session.self).url(forResource: "decks", withExtension: "json"))
+        let decks = try JSONDecoder().decode(DeckFile.self, from: Data(contentsOf: url)).decks.filter { $0.id.hasPrefix("en-sent") }
+        #expect(decks.count == 6)
+        #expect(decks.allSatisfy { $0.since == 5 && $0.cards.count == 10 })
+        for card in decks.flatMap(\.cards) {
+            #expect(!card.note.isEmpty)
+            #expect(Core.alternatives(card.value) == [card.value], "a sentence must stay one answer")
+        }
     }
 }

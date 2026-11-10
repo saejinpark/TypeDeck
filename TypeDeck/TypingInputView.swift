@@ -17,7 +17,6 @@ final class TypingInputView: NSView, NSTextInputClient {
     var onKeystroke: (() -> Void)?
     var onFocusChange: ((Bool) -> Void)?
     /// Number keys 1-9 (top row or keypad). Return true to consume the key.
-    var onNumberKey: ((Int) -> Bool)?
 
     private var committed = ""
     private var marked = ""
@@ -62,19 +61,11 @@ final class TypingInputView: NSView, NSTextInputClient {
     // MARK: Keyboard
 
     private static let nonCharacterKeys: Set<UInt16> = [36, 76, 48, 53, 51, 117, 123, 124, 125, 126]
-    /// Key codes of 1-9 on the top row and the keypad, independent of the input source.
-    private static let numberKeys: [UInt16: Int] = [
-        18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9,
-        83: 1, 84: 2, 85: 3, 86: 4, 87: 5, 88: 6, 89: 7, 91: 8, 92: 9,
-    ]
 
     override func keyDown(with event: NSEvent) {
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if mods.contains(.command) || mods.contains(.control) {
             super.keyDown(with: event)
-            return
-        }
-        if let number = Self.numberKeys[event.keyCode], marked.isEmpty, onNumberKey?(number) == true {
             return
         }
         if !Self.nonCharacterKeys.contains(event.keyCode), !(event.characters ?? "").isEmpty {
@@ -223,7 +214,6 @@ struct TypingInput: NSViewRepresentable {
     var onCommand: (TypingInputView.Command) -> Bool
     var onKeystroke: () -> Void
     var onFocusChange: (Bool) -> Void
-    var onNumberKey: (Int) -> Bool = { _ in false }
 
     final class Coordinator {
         var focusToken = -1
@@ -256,7 +246,6 @@ struct TypingInput: NSViewRepresentable {
         view.onCommand = onCommand
         view.onKeystroke = onKeystroke
         view.onFocusChange = onFocusChange
-        view.onNumberKey = onNumberKey
         if context.coordinator.resetToken != resetToken {
             context.coordinator.resetToken = resetToken
             view.reset()
