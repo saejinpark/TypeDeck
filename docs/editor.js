@@ -153,7 +153,7 @@ export function openEditor(deck, handlers) {
   $('#editorDelete').hidden = !deck;
   rows = (deck?.cards ?? []).map(toRow);
   ensureTrailingBlank();
-  note('');
+  showMessage('');
   view = 'rows';
   syncViewButtons();
   $('#editorRows').hidden = false;
@@ -320,7 +320,7 @@ function removeRow(i, then) {
 function importFile(fileName, text) {
   const { cards, skipped } = parseImport(text, fileName);
   if (!cards.length) {
-    note(`'${fileName}'에서 카드를 찾지 못했어요. 한 줄에 "키 = 값"이나 탭, CSV 두 열로 적힌 파일을 써 주세요.`);
+    showMessage(`'${fileName}'에서 카드를 찾지 못했어요. 한 줄에 "키 = 값"이나 탭, CSV 두 열로 적힌 파일을 써 주세요.`);
     return;
   }
   if (view === 'text') setView('rows');
@@ -331,7 +331,7 @@ function importFile(fileName, text) {
   dirty = true;
   updateCount();
   focusCell(rows.length - 1, 'k');
-  note(`'${fileName}'에서 ${cards.length}장을 불러왔어요.` + (skipped ? ` 나눌 수 없는 ${skipped}줄은 건너뛰었어요.` : ''));
+  showMessage(`'${fileName}'에서 ${cards.length}장을 불러왔어요.` + (skipped ? ` 나눌 수 없는 ${skipped}줄은 건너뛰었어요.` : ''));
 }
 
 function onRowPaste(e) {
@@ -343,7 +343,7 @@ function onRowPaste(e) {
   e.preventDefault();
   const { cards, skipped } = parseCardsDetailed(text);
   if (!cards.length) {
-    note(skipped ? `"키 = 값"이나 탭으로 나뉜 줄을 찾지 못했어요.` : '');
+    showMessage(skipped ? `"키 = 값"이나 탭으로 나뉜 줄을 찾지 못했어요.` : '');
     return;
   }
   let i = rowIndex(input);
@@ -355,7 +355,7 @@ function onRowPaste(e) {
   ensureTrailingBlank();
   renderRows();
   focusCell(insertAt + cards.length, 'k');
-  note(`${cards.length}장을 붙여 넣었어요.` + (skipped ? ` 나눌 수 없는 ${skipped}줄은 건너뛰었어요.` : ''));
+  showMessage(`${cards.length}장을 붙여 넣었어요.` + (skipped ? ` 나눌 수 없는 ${skipped}줄은 건너뛰었어요.` : ''));
 }
 
 /* ---------- views, count, save ---------- */
@@ -385,7 +385,7 @@ function setView(next) {
   $('#editorRows').hidden = view !== 'rows';
   if (view === 'rows') applyRatio();
   $('#editorCards').hidden = view !== 'text';
-  note('');
+  showMessage('');
   updateCount();
   if (view === 'text') $('#editorCards').focus();
   else focusCell(rows.length - 1, 'k');
@@ -397,8 +397,8 @@ function syncViewButtons() {
   }
 }
 
-function note(text) {
-  $('#editorNote').textContent = text;
+function showMessage(text) {
+  $('#editorMessage').textContent = text;
 }
 
 function save() {
@@ -406,7 +406,7 @@ function save() {
     const firstIncomplete = rows.findIndex(isIncomplete);
     if (firstIncomplete >= 0 && !warnedIncomplete) {
       warnedIncomplete = true;
-      note('키나 값이 빈 카드는 저장되지 않아요. 한 번 더 저장하면 빼고 저장합니다.');
+      showMessage('키나 값이 빈 카드는 저장되지 않아요. 한 번 더 저장하면 빼고 저장합니다.');
       focusCell(firstIncomplete, rows[firstIncomplete].q.trim() ? 'v' : 'k');
       return;
     }

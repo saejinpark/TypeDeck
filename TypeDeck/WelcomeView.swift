@@ -1,9 +1,8 @@
 import SwiftUI
 
 /// First-launch welcome: explains the app and offers the built-in decks as optional sample data.
-struct DeckPickerView: View {
+struct WelcomeView: View {
     @Environment(AppModel.self) private var model
-    let mode: DeckPickerMode
     @State private var chosen: Set<String> = []
     @State private var categories: [Seed.Category] = []
 
@@ -40,7 +39,7 @@ struct DeckPickerView: View {
         .frame(width: 500)
         .interactiveDismissDisabled()
         .onAppear {
-            categories = Seed.categories(seed: model.seed, decks: model.decks)
+            categories = Seed.categories(seed: model.seed)
             chosen = Set(categories.map(\.category))
         }
     }
@@ -57,7 +56,7 @@ struct DeckPickerView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(c.category.isEmpty ? Seed.uncategorized : c.category)
                         .font(.system(size: 14, weight: .semibold))
-                    Text("덱 \(c.decks.count)개 · \(c.words.formatted())장")
+                    Text("덱 \(c.decks.count)개 · \(c.cardCount.formatted())장")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

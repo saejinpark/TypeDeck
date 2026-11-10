@@ -21,13 +21,6 @@ struct TypeDeckApp: App {
                     .keyboardShortcut("o", modifiers: [.command, .shift])
                     .disabled(model.importStatus != nil)
             }
-            CommandGroup(after: .sidebar) {
-                Button("모든 카테고리 펼치기") { model.setAllCategories(open: true) }
-                    .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
-                Button("모든 카테고리 접기") { model.setAllCategories(open: false) }
-                    .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
-                Divider()
-            }
             CommandMenu("연습") {
                 Button("처음부터 다시") { model.startSession() }
                     .keyboardShortcut("r")

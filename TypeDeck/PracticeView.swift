@@ -146,8 +146,7 @@ private struct FrontCard: View {
 
     var body: some View {
         let showAnswer = model.mode == .copy || session.revealed
-        let target = session.target
-        let parts = Core.diff(answer: target, typed: session.typed, composing: session.composing)
+        let parts = Core.diff(answer: item.a, typed: session.shown, composing: session.composing)
         let hasError = showAnswer && parts.contains { $0.state == .bad || $0.state == .extra }
 
         VStack(alignment: .leading, spacing: 0) {
@@ -170,8 +169,7 @@ private struct FrontCard: View {
             Spacer(minLength: 10)
             DashedLine()
                 .padding(.bottom, 16)
-            AnswerLine(parts: parts, alts: item.alts, target: target, typed: session.typed, showAnswer: showAnswer,
-                       awaitingReturn: session.awaitingReturn, size: Self.answerSize(item.a))
+            AnswerLine(parts: parts, typed: session.shown, showAnswer: showAnswer, size: Self.answerSize(item.a))
                 .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
         }
         .padding(.horizontal, 34)
@@ -304,12 +302,9 @@ private struct NotePanel: View {
 private struct AnswerLine: View {
     @Environment(AppModel.self) private var model
     let parts: [CharDiff]
-    /// Every accepted answer; `target` is the one being typed and gets the character view.
-    let alts: [String]
-    let target: String
+    /// What was typed, with the ", " between meanings filled in.
     let typed: String
     let showAnswer: Bool
-    var awaitingReturn = false
 
     /// Type size; smaller for sentences so they fit on the card.
     var size: CGFloat = 30
@@ -336,10 +331,7 @@ private struct AnswerLine: View {
     private func attributed(caretOn: Bool, caretDim: Bool) -> AttributedString {
         var out = AttributedString()
         if showAnswer {
-            for (k, alt) in alts.enumerated() {
-                if k > 0 { out += muted(", ") }
-                if alt == target { out += diffRun(caretOn: caretOn, caretDim: caretDim) } else { out += muted(alt) }
-            }
+            out += diffRun(caretOn: caretOn, caretDim: caretDim)
         } else {
             var t = AttributedString(typed)
             t.foregroundColor = Palette.ink
@@ -352,20 +344,7 @@ private struct AnswerLine: View {
                 out += hint
             }
         }
-        if awaitingReturn {
-            var hint = AttributedString("  ↩ Return으로 넘기기")
-            hint.foregroundColor = Palette.accent
-            hint.font = .system(size: size * 0.5, weight: .semibold)
-            out += hint
-        }
         return out
-    }
-
-    private func muted(_ text: String) -> AttributedString {
-        var run = AttributedString(text)
-        run.foregroundColor = Palette.ghost
-        run.font = .system(size: size * 0.68, weight: .regular)
-        return run
     }
 
     private func diffRun(caretOn: Bool, caretDim: Bool) -> AttributedString {

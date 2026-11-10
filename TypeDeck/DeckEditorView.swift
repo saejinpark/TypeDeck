@@ -549,7 +549,7 @@ struct DeckEditorView: View {
             name = draft.name
             category = draft.category
             rows = EditorRows(cards: draft.cards)
-            note = draft.note
+            note = draft.message
             dirty = true
         }
         DispatchQueue.main.async {

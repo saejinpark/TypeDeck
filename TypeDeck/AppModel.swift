@@ -18,13 +18,8 @@ struct DeckDraft: Hashable {
     var name: String
     var category: String
     var cards: [Card]
-    var note: String
-}
-
-/// The first-launch sheet that offers the TOEIC sample decks.
-enum DeckPickerMode: String, Identifiable {
-    case welcome
-    var id: String { rawValue }
+    /// What the editor tells the user about how the draft was made.
+    var message: String
 }
 
 /// The name field shown to create or rename a category.
@@ -84,16 +79,17 @@ final class AppModel {
 
     var editorTarget: EditorTarget?
 
-    // MARK: PDF import state
+    // MARK: File import state
     struct ImportStatus: Equatable {
         var fileName: String
         var phase: String
         var progress: Double
     }
-    var showPDFImporter = false
+    var showFileImporter = false
     /// Category that a deck made from a file goes into; nil means the current deck's.
     var importCategory: String?
-    var deckPicker: DeckPickerMode?
+    /// The first-launch welcome that offers the sample decks.
+    var showWelcome = false
     var categoryPrompt: CategoryPrompt?
     private(set) var importStatus: ImportStatus?
     var importError: String?
@@ -130,18 +126,16 @@ final class AppModel {
         let storedVersion = defaults.integer(forKey: Keys.seedVersion)
         let stored = Self.loadFile(from: storeURL)
         if let stored {
-            decks = Seed.migrate(stored.decks, from: storedVersion, seed: seed)
+            decks = Seed.migrate(stored.decks, from: storedVersion, seed: seed).map(\.userCopy)
             categoryOrder = Seed.sync(stored.categories ?? [], with: decks)
             defaults.set(Seed.version, forKey: Keys.seedVersion)
         } else {
             // First launch: nothing is stored until the welcome sheet is answered.
             decks = []
-            deckPicker = .welcome
+            showWelcome = true
         }
         let saved = defaults.string(forKey: Keys.deck)
         selectedDeckID = decks.contains { $0.id == saved } ? saved : decks.first?.id
-        // Before seed 3 there were only a few decks; now only the current deck's category starts open.
-        if storedVersion < 3 { collapsedCategories = Seed.collapsed(except: selectedDeckID, in: decks) }
         reveal(selectedDeckID)
         if stored != nil { save() }
         startSession()
@@ -182,10 +176,6 @@ final class AppModel {
 
     // MARK: Sidebar categories
 
-    var allCategoriesCollapsed: Bool {
-        groups.allSatisfy { collapsedCategories.contains($0.category) }
-    }
-
     /// Creates an empty category. Returns a message when the name cannot be used.
     @discardableResult
     func createCategory(_ name: String) -> String? {
@@ -222,7 +212,7 @@ final class AppModel {
     /// Opens the file picker for a deck made from a PDF or a text/CSV file.
     func startImport(into category: String?) {
         importCategory = category
-        showPDFImporter = true
+        showFileImporter = true
     }
 
     func toggleCategory(_ category: String) {
@@ -231,10 +221,6 @@ final class AppModel {
         } else {
             collapsedCategories.insert(category)
         }
-    }
-
-    func setAllCategories(open: Bool) {
-        collapsedCategories = open ? [] : Set(groups.map(\.category))
     }
 
     /// Opens the category holding `id` so the selected deck is visible.
@@ -298,14 +284,14 @@ final class AppModel {
     /// The samples are only offered here. Returns how many decks were added.
     @discardableResult
     func finishWelcome(sampleCategories: Set<String>) -> Int {
-        let add = Seed.categories(seed: seed, decks: decks).filter { sampleCategories.contains($0.category) }.flatMap(\.missing)
+        let add = Seed.categories(seed: seed).filter { sampleCategories.contains($0.category) }.flatMap(\.decks)
         decks = Seed.adding(add, to: decks, seed: seed)
         save()
         defaults.set(Seed.version, forKey: Keys.seedVersion)
         selectedDeckID = nil
         select(decks.first?.id)
         collapsedCategories = Seed.collapsed(except: selectedDeckID, in: decks)
-        deckPicker = nil
+        showWelcome = false
         refocus()
         return add.count
     }
@@ -358,11 +344,7 @@ final class AppModel {
         switch command {
         case .submit:
             if session.finished { startSession(); return false }
-            switch session.submit(at: now) {
-            case .advance: return true
-            case .shake: shakeToken += 1
-            default: break
-            }
+            if session.submit() == .shake { shakeToken += 1 }
         case .skip:
             if session.finished {
                 if !session.missed.isEmpty { startSession(onlyMissed: true) }
@@ -401,7 +383,7 @@ final class AppModel {
         }
         let skipped = parsed.skipped > 0 ? " 나눌 수 없는 \(parsed.skipped)줄은 건너뛰었어요." : ""
         editorTarget = .draft(DeckDraft(name: url.deletingPathExtension().lastPathComponent, category: draftCategory,
-                                        cards: parsed.cards, note: "'\(fileName)'에서 \(parsed.cards.count)장을 불러왔어요.\(skipped)"))
+                                        cards: parsed.cards, message: "'\(fileName)'에서 \(parsed.cards.count)장을 불러왔어요.\(skipped)"))
     }
 
     func importPDF(at url: URL) {
@@ -454,13 +436,13 @@ final class AppModel {
             let parsed = Core.parseCardsDetailed(pdf.text).cards
             guard !parsed.isEmpty else { throw ImportError.unavailable(reason) }
             return DeckDraft(name: name, category: category, cards: parsed,
-                             note: "\(reason) 대신 구분자가 있는 줄 \(parsed.count)개를 카드로 만들었어요.\(ocrNote)")
+                             message: "\(reason) 대신 구분자가 있는 줄 \(parsed.count)개를 카드로 만들었어요.\(ocrNote)")
         }
         let chunks = PDFTextExtractor.chunks(pdf.text)
         let output = try await DeckGenerator.cards(from: chunks, progress: progress)
         guard !output.cards.isEmpty else { throw ImportError.noCards }
         let failed = output.failedChunks > 0 ? " 처리하지 못한 구간이 \(output.failedChunks)개 있어요." : ""
         return DeckDraft(name: name, category: category, cards: output.cards,
-                         note: "Apple Intelligence가 \(output.cards.count)장을 만들었어요. 저장하기 전에 확인해 주세요.\(ocrNote)\(failed)")
+                         message: "Apple Intelligence가 \(output.cards.count)장을 만들었어요. 저장하기 전에 확인해 주세요.\(ocrNote)\(failed)")
     }
 }

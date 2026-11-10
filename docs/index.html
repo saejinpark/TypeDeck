@@ -17,7 +17,6 @@
       <div class="brand"><img src="icon.svg" alt="" width="28" height="28"><span>TypeDeck</span></div>
       <div class="deck-tools">
         <span class="deck-tools-label">덱</span>
-        <button class="link-btn keep-focus" id="toggleGroups" type="button"></button>
         <div class="add-menu">
           <button class="icon-btn keep-focus" id="addMenuBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="addMenu" title="새로 만들기">
             <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M8 3v10M3 8h10"/></svg>
@@ -30,7 +29,7 @@
         </div>
       </div>
       <nav class="deck-list" id="deckList" aria-label="덱 목록"></nav>
-      <span class="note" id="sidebarNote" role="status"></span>
+      <span class="sidebar-status" id="sidebarStatus" role="status"></span>
     </aside>
 
     <main class="stage">
@@ -113,7 +112,7 @@
         </div>
         <textarea id="editorCards" rows="14" spellcheck="false" hidden placeholder="한 줄에 카드 하나: 키 = 값&#10;대한민국 = 서울&#10;404 = Not Found&#10;&#10;값이 여러 개면 쉼표로: apply = 지원하다, 신청하다&#10;메모는 카드 줄 바로 아래에 > 로 시작하는 줄로 씁니다.&#10;탭, =, : 로 나눠도 됩니다. 스프레드시트 두 열을 그대로 붙여 넣어도 돼요."></textarea>
       </div>
-      <p class="editor-note" id="editorNote" role="status"></p>
+      <p class="editor-message" id="editorMessage" role="status"></p>
       <div class="editor-actions">
         <button type="button" class="danger-btn" id="editorDelete">덱 삭제</button>
         <span class="spacer"></span>
@@ -123,20 +122,20 @@
     </div>
   </dialog>
 
-  <dialog class="editor picker" id="picker" aria-labelledby="pickerTitle">
+  <dialog class="editor welcome" id="welcome" aria-labelledby="welcomeTitle">
     <div class="editor-inner">
-      <div class="picker-hero">
+      <div class="welcome-hero">
         <img src="icon.svg" alt="" width="44" height="44">
         <div>
-          <h2 id="pickerTitle"></h2>
-          <p id="pickerLead"></p>
+          <h2 id="welcomeTitle"></h2>
+          <p id="welcomeLead"></p>
         </div>
       </div>
-      <div class="picker-list" id="pickerList"></div>
+      <div class="welcome-list" id="welcomeList"></div>
       <div class="editor-actions">
         <span class="spacer"></span>
-        <button type="button" class="ghost-btn" id="pickerSkip"></button>
-        <button type="button" class="primary-btn" id="pickerOk"></button>
+        <button type="button" class="ghost-btn" id="welcomeSkip"></button>
+        <button type="button" class="primary-btn" id="welcomeOk"></button>
       </div>
     </div>
   </dialog>

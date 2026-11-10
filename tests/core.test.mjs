@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCards, serializeCards, diff, Session, REQUEUE_GAP, alternatives, pickTarget } from '../docs/core.js';
+import { parseCards, serializeCards, diff, Session, REQUEUE_GAP, meanings, typingTarget, fillSeparators } from '../docs/core.js';
 
 test('parses the supported separators', () => {
   const cards = parseCards('a = 1\nb\t2\n# comment\n\nc: 3\nd=4\nno separator\ne = x = y\nf : git log --oneline');
@@ -44,8 +44,8 @@ test('a wrong character makes the card come back later', () => {
 
 test('enter reveals, tab skips and both count as a miss', () => {
   const s = new Session([['a', '1'], ['b', '2']], { shuffle: false });
-  assert.equal(s.submit(0), 'reveal');
-  assert.equal(s.submit(0), 'shake');
+  assert.equal(s.submit(), 'reveal');
+  assert.equal(s.submit(), 'shake');
   assert.equal(s.input('1', false, 5), 'advance');
   assert.equal(s.skip(10), 'advance');
   assert.equal(s.accuracy, 0);
@@ -150,18 +150,20 @@ test('parseCardsDetailed counts lines it could not use', () => {
 import { migrateDecks, groupDecks, collapsedExcept, seedCategories, addSeedDecks, syncCategories, renameCategory, parseImport, SEED_VERSION } from '../docs/core.js';
 
 
-test('migrateDecks replaces retired built-in decks once', () => {
-  const seed = [{ id: 'toeic-basic-01', name: 'T', category: '토익', cards: [['a', '1']] }, { id: 'toeic-mid-01', name: 'U', cards: [['b', '2']] }];
-  const old = [{ id: 'proverbs', name: 'P', cards: [] }, { id: 'mine', name: 'M', cards: [['x', 'y']] }];
-  const next = migrateDecks(old, 1, seed);
-  assert.deepEqual(next.map((d) => d.id), ['toeic-basic-01', 'toeic-mid-01', 'mine']);
+test('migrateDecks adds built-in decks newer than the stored data, once', () => {
+  const seed = [
+    { id: 'toeic-basic-01', name: 'T', category: '토익', since: 3, cards: [['a', '1']] },
+    { id: 'en-sent-01', name: 'S', category: '영어 문장', since: 5, cards: [['ko', 'en.', '메모']] },
+  ];
+  const mine = { id: 'mine', name: 'M', cards: [] };
+  // Data from before the sentence decks gets them, with their 메모.
+  const next = migrateDecks([mine], 4, seed);
+  assert.deepEqual(next.map((d) => d.id), ['en-sent-01', 'mine']);
+  assert.deepEqual(next[0].cards[0], ['ko', 'en.', '메모']);
+  // A TOEIC deck the user deleted at version 4 does not come back.
+  assert.ok(!next.some((d) => d.id === 'toeic-basic-01'));
+  // Up-to-date data is left alone.
   assert.equal(migrateDecks(next, SEED_VERSION, seed), next);
-  // Version 2 had three small TOEIC decks and TOEFL; both give way to the day decks.
-  const v2 = [{ id: 'toeic-1', name: 'old', cards: [] }, { id: 'toefl-1', name: 'F', cards: [] }, { id: 'mine', name: 'M', cards: [] }];
-  assert.deepEqual(migrateDecks(v2, 2, seed).map((d) => d.id), ['toeic-basic-01', 'toeic-mid-01', 'mine']);
-  // From version 3 only TOEFL goes; a TOEIC deck the user deleted is not brought back.
-  const v3 = [{ id: 'toeic-basic-01', name: 'T', cards: [] }, { id: 'toefl-2', name: 'F', cards: [] }, { id: 'mine', name: 'M', cards: [] }];
-  assert.deepEqual(migrateDecks(v3, 3, seed).map((d) => d.id), ['toeic-basic-01', 'mine']);
 });
 
 test('groupDecks keeps first-seen order and puts uncategorized last', () => {
@@ -169,33 +171,36 @@ test('groupDecks keeps first-seen order and puts uncategorized last', () => {
   assert.deepEqual(g.map((x) => [x.category, x.decks.map((d) => d.id)]), [['토플', [1, 4]], ['토익', [3]], ['', [2]]]);
 });
 
-test('alternatives split on commas but keep numbers like 1,000', () => {
-  assert.deepEqual(alternatives('지원하다, 신청하다'), ['지원하다', '신청하다']);
-  assert.deepEqual(alternatives('지원하다,신청하다 ,'), ['지원하다', '신청하다']);
-  assert.deepEqual(alternatives('1,000'), ['1,000']);
-  assert.deepEqual(alternatives('apply'), ['apply']);
-  assert.equal(pickTarget(['지원하다', '신청하다'], '신'), '신청하다');
-  assert.equal(pickTarget(['지원하다', '신청하다'], ''), '지원하다');
+test('meanings split on commas but keep numbers like 1,000', () => {
+  assert.deepEqual(meanings('지원하다, 신청하다'), ['지원하다', '신청하다']);
+  assert.deepEqual(meanings('지원하다,신청하다 ,'), ['지원하다', '신청하다']);
+  assert.deepEqual(meanings('1,000'), ['1,000']);
+  assert.deepEqual(meanings('apply'), ['apply']);
+  assert.equal(typingTarget('지원하다,신청하다').text, '지원하다, 신청하다');
 });
 
-test('any one of several meanings completes the card', () => {
-  const s = new Session([['apply', '지원하다, 신청하다'], ['hire', '고용하다']], { shuffle: false });
-  assert.equal(s.input('신청', false, 0), 'none');
-  assert.equal(s.target, '신청하다');
-  assert.equal(s.hadError, false, 'heading for the second meaning is not an error');
-  assert.equal(s.input('신청하다', false, 10), 'advance');
+test('every meaning is typed; the ", " between them fills in by itself', () => {
+  const target = typingTarget('줄, 노선, 제품군');
+  assert.deepEqual(fillSeparators(target, '줄', false).shown, '줄, ');
+  assert.deepEqual(fillSeparators(target, '줄', true).shown, '줄', 'not while the syllable is still being composed');
+  assert.deepEqual(fillSeparators(target, '줄노선', false).shown, '줄, 노선, ');
+  assert.deepEqual(fillSeparators(target, '줄, 노선', false).shown, '줄, 노선, ', 'typing the comma yourself also works');
+  assert.deepEqual(fillSeparators(target, '줄,노선', false).shown, '줄, 노선, ');
+  const s = new Session([['line', '줄, 노선, 제품군'], ['hire', '고용하다']], { shuffle: false });
+  assert.equal(s.input('줄', false, 0), 'none', 'the first meaning alone is not enough');
+  assert.equal(s.input('줄노선', false, 1), 'none');
+  assert.equal(s.hadError, false);
+  assert.equal(s.input('줄노선제품군', false, 2), 'advance');
   assert.equal(s.current.q, 'hire');
   assert.equal(s.streak, 1);
 });
 
-test('a meaning that starts a longer one waits for Enter', () => {
-  const s = new Session([['a', '지원, 지원하다'], ['b', 'x']], { shuffle: false });
-  assert.equal(s.input('지원', false, 0), 'none');
-  assert.equal(s.submit(5), 'advance');
-  assert.equal(s.current.q, 'b');
-  assert.equal(s.streak, 1, 'accepting with Enter is still a clean answer');
-  const t = new Session([['a', '지원, 지원하다'], ['b', 'x']], { shuffle: false });
-  assert.equal(t.input('지원하다', false, 0), 'advance');
+test('a wrong meaning is an error at its own place', () => {
+  const s = new Session([['line', '줄, 노선']], { shuffle: false });
+  s.input('줄노산', false, 0);
+  assert.equal(s.shown, '줄, 노산');
+  assert.equal(s.hadError, true);
+  assert.deepEqual(diff(s.current.a, s.shown, false).map((d) => d.state), ['ok', 'ok', 'ok', 'ok', 'bad']);
 });
 
 test('reverse shows all meanings and asks for the word', () => {
@@ -204,9 +209,9 @@ test('reverse shows all meanings and asks for the word', () => {
   assert.equal(s.input('apply', false, 0), 'advance');
 });
 
-test('pasted text carries over past a short meaning', () => {
+test('pasted text carries over to the next cards', () => {
   const s = new Session([['a', '가, 나'], ['b', '다'], ['c', '라']], { shuffle: false });
-  assert.deepEqual(s.feed('나다라', false, 0), { advanced: 3, rest: '' });
+  assert.deepEqual(s.feed('가나다라', false, 0), { advanced: 3, rest: '' });
   assert.equal(s.finished, true);
 });
 
@@ -216,16 +221,15 @@ test('collapsedExcept leaves only the current deck category open', () => {
   assert.deepEqual(collapsedExcept(decks, 'missing'), ['토익 기초', '토플']);
 });
 
-test('seedCategories reports what is missing and addSeedDecks keeps seed order first', () => {
+test('seedCategories counts cards and addSeedDecks keeps seed order first', () => {
   const seed = [
     { id: 'b1', category: '기초', cards: [['a', '1'], ['b', '2']] },
     { id: 'b2', category: '기초', cards: [['c', '3']] },
     { id: 'm1', category: '중급', cards: [['d', '4']] },
   ];
   const mine = { id: 'mine', category: '', cards: [] };
-  const cats = seedCategories(seed, [seed[1], mine]);
-  assert.deepEqual(cats.map((c) => [c.category, c.words, c.missing.map((d) => d.id)]), [['기초', 3, ['b1']], ['중급', 1, ['m1']]]);
-  const next = addSeedDecks([mine, seed[2]], seed, [seed[0]]);
+  assert.deepEqual(seedCategories(seed).map((c) => [c.category, c.decks.length, c.cardCount]), [['기초', 2, 3], ['중급', 1, 1]]);
+  const next = addSeedDecks([mine, seed[2]], seed, [seed[0], seed[2]]);
   assert.deepEqual(next.map((d) => d.id), ['b1', 'm1', 'mine']);
   assert.deepEqual(addSeedDecks([], seed, []), []);
 });
@@ -268,26 +272,12 @@ test('notes: "> " lines after a card, kept through serialize and the session', (
 });
 
 test('a sentence answer keeps its commas', () => {
-  assert.deepEqual(alternatives('If I had known, I would have come.'), ['If I had known, I would have come.']);
-  assert.deepEqual(alternatives('Yes, I do.'), ['Yes, I do.']);
-  assert.deepEqual(alternatives('"Wait," she said, "not yet!"'), ['"Wait," she said, "not yet!"']);
-  assert.deepEqual(alternatives('지원하다, 신청하다'), ['지원하다', '신청하다']);
+  assert.deepEqual(meanings('If I had known, I would have come.'), ['If I had known, I would have come.']);
+  assert.deepEqual(meanings('Yes, I do.'), ['Yes, I do.']);
+  assert.deepEqual(meanings('"Wait," she said, "not yet!"'), ['"Wait," she said, "not yet!"']);
   const s = new Session([['내가 알았더라면, 왔을 텐데.', 'If I had known, I would have come.']], { shuffle: false });
   assert.equal(s.input('If I had known,', false, 0), 'none');
+  assert.equal(s.shown, 'If I had known,', 'no automatic space inside a sentence');
   assert.equal(s.hadError, false);
   assert.equal(s.input('If I had known, I would have come.', false, 1), 'advance');
-});
-
-test('seed v5 adds only decks newer than the stored data, notes included', () => {
-  const seed = [
-    { id: 'toeic-basic-01', name: 'T', category: '토익', cards: [['a', '1']] },
-    { id: 'en-sent-01', name: 'S', category: '영어 문장', since: 5, cards: [['ko', 'en.', '해설']] },
-  ];
-  // A v4 user who deleted the TOEIC deck gets the sentence deck but not TOEIC back.
-  const v4 = migrateDecks([{ id: 'mine', name: 'M', cards: [] }], 4, seed);
-  assert.deepEqual(v4.map((d) => d.id), ['en-sent-01', 'mine']);
-  assert.deepEqual(v4[0].cards[0], ['ko', 'en.', '해설']);
-  // Older data gets both.
-  assert.deepEqual(migrateDecks([], 2, seed).map((d) => d.id), ['toeic-basic-01', 'en-sent-01']);
-  assert.equal(migrateDecks(v4, SEED_VERSION, seed), v4);
 });

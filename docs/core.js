@@ -71,30 +71,48 @@ export function diff(answer, typed, composing) {
 }
 
 /**
- * Splits an answer like "지원하다, 신청하다" into the answers that are accepted. Any one of them
- * completes the card. A comma between two digits ("1,000") does not split.
+ * The meanings of an answer like "지원하다, 신청하다". All of them are typed, in order. A sentence
+ * (ending in . ? or !) is one meaning, and a comma between two digits ("1,000") does not split.
  */
-export function alternatives(answer) {
+export function meanings(answer) {
   const s = normalize(answer).trim();
-  // A sentence is one answer: its commas are part of it.
   if (/[.?!][\s"')\]]*$/.test(s)) return [s];
   const parts = s.split(/(?<!\d),|,(?!\d)/).map((p) => p.trim()).filter(Boolean);
-  return parts.length > 1 ? [...new Set(parts)] : [s];
+  return parts.length > 1 ? parts : [s];
 }
 
-/** The accepted answer the typed text is heading for: the one sharing the longest prefix. */
-export function pickTarget(alts, typed) {
-  if (alts.length === 1) return alts[0];
-  const t = chars(typed);
-  let best = alts[0];
-  let bestLen = -1;
-  for (const alt of alts) {
-    const a = chars(alt);
-    let k = 0;
-    while (k < t.length && k < a.length && a[k] === t[k]) k++;
-    if (k > bestLen) { best = alt; bestLen = k; }
+/** What is typed for an answer: its meanings joined by ", ", and where those separators sit. */
+export function typingTarget(answer) {
+  const parts = meanings(answer);
+  const auto = new Set();
+  let at = 0;
+  parts.forEach((p, k) => {
+    at += chars(p).length;
+    if (k < parts.length - 1) { auto.add(at); auto.add(at + 1); at += 2; }
+  });
+  return { text: parts.join(', '), auto };
+}
+
+/**
+ * Lines the typed text up with the target and fills in the ", " between meanings, which the user
+ * does not have to type (typing it is fine too). Returns the text as it reads on the card, and
+ * how many typed characters spelled out the whole target (-1 until they do).
+ */
+export function fillSeparators(target, typed, composing) {
+  const t = chars(target.text);
+  const u = chars(typed);
+  let shown = '';
+  let i = 0;
+  let used = -1;
+  for (let j = 0; j < u.length; j++) {
+    while (i < t.length && target.auto.has(i) && u[j] !== t[i]) shown += t[i++];
+    shown += u[j];
+    i++;
+    if (used < 0 && i === t.length && shown === target.text) used = j + 1;
   }
-  return best;
+  // A meaning that is finished moves the caret past the ", " right away.
+  if (!composing) while (i < t.length && target.auto.has(i)) shown += t[i++];
+  return { shown, used };
 }
 
 export function shuffled(list, rng = Math.random) {
@@ -113,8 +131,8 @@ export const MAX_REQUEUES = 3;
 export class Session {
   constructor(cards, { shuffle = true, reverse = false, rng = Math.random } = {}) {
     this.items = cards.map(([q, a, note], id) => {
-      const answer = normalize(reverse ? q : a);
-      return { id, q: reverse ? a : q, a: answer, alts: alternatives(answer), note: note ?? '' };
+      const target = typingTarget(reverse ? q : a);
+      return { id, q: reverse ? a : q, a: target.text, target, note: note ?? '' };
     });
     const order = this.items.map((it) => it.id);
     this.queue = shuffle ? shuffled(order, rng) : order;
@@ -131,29 +149,11 @@ export class Session {
 
   resetCard() {
     this.typed = '';
+    this.shown = ''; // typed text with the ", " between meanings filled in
     this.composing = false;
     this.revealed = false;
     this.hadError = false;
     this.cardStart = null;
-  }
-
-  /** The accepted answer the current input is compared with. */
-  get target() {
-    return this.current ? pickTarget(this.current.alts, this.typed) : '';
-  }
-
-  /**
-   * True when `typed` is one of the accepted answers and no longer accepted answer starts with
-   * it, so the card can finish without waiting for Enter.
-   */
-  isComplete(typed) {
-    const { alts } = this.current;
-    return alts.includes(typed) && !alts.some((x) => x !== typed && x.startsWith(typed));
-  }
-
-  /** The input is an accepted answer, but a longer one starts with it, so Enter finishes it. */
-  get awaitingEnter() {
-    return Boolean(this.current && this.typed && this.current.alts.includes(this.typed));
   }
 
   get finished() { return this.pos >= this.queue.length; }
@@ -172,12 +172,13 @@ export class Session {
     if (!card) return 'none';
     this.typed = normalize(text);
     this.composing = composing;
+    this.shown = fillSeparators(card.target, this.typed, composing).shown;
     if (this.typed && this.cardStart === null) this.cardStart = now;
-    if (this.isComplete(this.typed)) {
+    if (this.shown === card.a) {
       this.complete(now);
       return 'advance';
     }
-    if (diff(this.target, this.typed, composing).some((d) => d.state === 'bad' || d.state === 'extra')) {
+    if (diff(card.a, this.shown, composing).some((d) => d.state === 'bad' || d.state === 'extra')) {
       this.hadError = true;
     }
     return 'none';
@@ -190,16 +191,13 @@ export class Session {
   feed(text, composing, now) {
     let t = normalize(text);
     let advanced = 0;
-    const overflowing = () => {
-      if (this.finished || composing) return null;
-      const longestFirst = [...this.current.alts].sort((x, y) => y.length - x.length);
-      return longestFirst.find((alt) => t.length > alt.length && t.startsWith(alt)) ?? null;
-    };
-    for (let a = overflowing(); a !== null; a = overflowing()) {
+    while (!this.finished && !composing) {
+      const { used } = fillSeparators(this.current.target, t, false);
+      if (used < 0 || used >= chars(t).length) break;
       if (this.cardStart === null) this.cardStart = now;
       this.complete(now);
       advanced++;
-      t = t.slice(a.length);
+      t = chars(t).slice(used).join('');
     }
     if (this.finished) return { advanced, rest: '' };
     if (advanced && !t) return { advanced, rest: '' };
@@ -207,16 +205,9 @@ export class Session {
     return { advanced, rest: t };
   }
 
-  /**
-   * Enter key. Accepts an answer that is complete but is also the start of a longer one
-   * ("지원" when "지원하다" is accepted too). Otherwise reveals the answer the first time.
-   */
-  submit(now) {
+  /** Enter key. Reveals the answer the first time. */
+  submit() {
     if (this.finished) return 'none';
-    if (this.typed && !this.composing && this.current.alts.includes(this.typed)) {
-      this.complete(now);
-      return 'advance';
-    }
     if (this.revealed) return 'shake';
     this.revealed = true;
     return 'reveal';
@@ -250,10 +241,6 @@ export class Session {
     }
     this.pos++;
     this.resetCard();
-  }
-
-  upcoming(n) {
-    return this.queue.slice(this.pos + 1, this.pos + 1 + n).map((id) => this.items[id]);
   }
 
   get missed() {
@@ -365,41 +352,27 @@ export class InputTracker {
 /* ---------- decks ---------- */
 
 export const SEED_VERSION = 5;
-/** Seed version that first shipped a built-in deck without a `since` field (the TOEIC decks). */
-const DEFAULT_SINCE = 3;
 /**
- * Built-in decks from earlier versions that were removed: the original sample decks (v2), the
- * three 50-word TOEIC decks that became the TOEIC day decks (v3) and the TOEFL decks (v4).
- */
-export const RETIRED_SEED_IDS = [
-  'proverbs', 'http-status', 'git', 'js-methods', 'elements', 'capitals',
-  'toeic-1', 'toeic-2', 'toeic-3', 'toefl-1', 'toefl-2', 'toefl-3',
-];
-
-/**
- * Drops retired built-in decks and adds built-in decks that are newer than the stored data
- * (a deck's `since` is the seed version that brought it). A deck the user deleted is never
- * brought back, because it is not newer than the version they deleted it in.
+ * Adds built-in decks that are newer than the stored data. A built-in deck's `since` is the seed
+ * version that brought it, so a deck the user deleted never comes back on an update.
  */
 export function migrateDecks(decks, seedVersion, seed) {
-  const from = seedVersion ?? 1;
+  const from = seedVersion ?? 0;
   if (from >= SEED_VERSION) return decks;
-  const kept = decks.filter((d) => !RETIRED_SEED_IDS.includes(d.id));
-  const missing = seed.filter((s) => (s.since ?? DEFAULT_SINCE) > from && !kept.some((d) => d.id === s.id));
+  const have = new Set(decks.map((d) => d.id));
+  const added = seed.filter((s) => (s.since ?? 0) > from && !have.has(s.id));
   const clone = (d) => ({ id: d.id, name: d.name, category: d.category ?? '', cards: d.cards.map((c) => [...c]) });
-  return [...missing.map(clone), ...kept];
+  return [...added.map(clone), ...decks];
 }
 
 export const UNCATEGORIZED = '미분류';
 
-/** Built-in decks grouped by category, with the ones not yet in `decks` and the word count. */
-export function seedCategories(seed, decks) {
-  const have = new Set(decks.map((d) => d.id));
-  return groupDecks(seed).map(({ category, decks: list }) => ({
+/** Built-in decks grouped by category, with the number of cards in each category. */
+export function seedCategories(seed) {
+  return groupDecks(seed).map(({ category, decks }) => ({
     category,
-    decks: list,
-    words: list.reduce((n, d) => n + d.cards.length, 0),
-    missing: list.filter((d) => !have.has(d.id)),
+    decks,
+    cardCount: decks.reduce((n, d) => n + d.cards.length, 0),
   }));
 }
 

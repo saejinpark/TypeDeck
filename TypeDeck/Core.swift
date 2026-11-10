@@ -54,10 +54,16 @@ struct Deck: Identifiable, Hashable, Codable {
         cards = try c.decode([Card].self, forKey: .cards)
         since = try c.decodeIfPresent(Int.self, forKey: .since)
     }
+
+    /// A built-in deck as it is stored in the user's list: `since` only matters in the seed.
+    var userCopy: Deck {
+        var d = self
+        d.since = nil
+        return d
+    }
 }
 
 struct DeckFile: Codable {
-    var version = 1
     var decks: [Deck]
     /// The user's categories in sidebar order, including empty ones. Missing in older files.
     var categories: [String]?
@@ -65,21 +71,14 @@ struct DeckFile: Codable {
 
 enum Seed {
     static let version = 5
-    /// Seed version that first shipped a built-in deck without a `since` (the TOEIC decks).
-    static let defaultSince = 3
-    /// Built-in decks from earlier versions that were removed: the original sample decks (v2), the
-    /// three 50-word TOEIC decks that became the TOEIC day decks (v3) and the TOEFL decks (v4).
-    static let retiredIDs: Set<String> = ["proverbs", "http-status", "git", "js-methods", "elements", "capitals",
-                                          "toeic-1", "toeic-2", "toeic-3", "toefl-1", "toefl-2", "toefl-3"]
 
-    /// Drops retired built-in decks and adds built-in decks that are newer than the stored data
-    /// (`since` is the seed version that brought a deck). A deck the user deleted is never brought
-    /// back, because it is not newer than the version they deleted it in.
+    /// Adds built-in decks that are newer than the stored data. A built-in deck's `since` is the
+    /// seed version that brought it, so a deck the user deleted never comes back on an update.
     static func migrate(_ decks: [Deck], from version: Int, seed: [Deck]) -> [Deck] {
         guard version < Self.version else { return decks }
-        let kept = decks.filter { !retiredIDs.contains($0.id) }
-        let missing = seed.filter { s in (s.since ?? defaultSince) > version && !kept.contains { $0.id == s.id } }
-        return missing + kept
+        let have = Set(decks.map(\.id))
+        let added = seed.filter { ($0.since ?? 0) > version && !have.contains($0.id) }
+        return added.map(\.userCopy) + decks
     }
 
     static let uncategorized = "미분류"
@@ -87,18 +86,14 @@ enum Seed {
     struct Category: Identifiable {
         let category: String
         let decks: [Deck]
-        let words: Int
-        /// Built-in decks of this category that are not in the user's list.
-        let missing: [Deck]
+        let cardCount: Int
         var id: String { category }
     }
 
-    /// Built-in decks grouped by category, with the ones not yet in `decks` and the word count.
-    static func categories(seed: [Deck], decks: [Deck]) -> [Category] {
-        let have = Set(decks.map(\.id))
-        return group(seed).map { g in
-            Category(category: g.category, decks: g.decks, words: g.decks.reduce(0) { $0 + $1.cards.count },
-                     missing: g.decks.filter { !have.contains($0.id) })
+    /// Built-in decks grouped by category, with the number of cards in each category.
+    static func categories(seed: [Deck]) -> [Category] {
+        group(seed).map { g in
+            Category(category: g.category, decks: g.decks, cardCount: g.decks.reduce(0) { $0 + $1.cards.count })
         }
     }
 
@@ -107,7 +102,7 @@ enum Seed {
     static func adding(_ add: [Deck], to decks: [Deck], seed: [Deck]) -> [Deck] {
         var byID: [String: Deck] = [:]
         for d in decks { byID[d.id] = d }
-        for d in add where byID[d.id] == nil { byID[d.id] = d }
+        for d in add where byID[d.id] == nil { byID[d.id] = d.userCopy }
         let seedIDs = Set(seed.map(\.id))
         return seed.compactMap { byID[$0.id] } + decks.filter { !seedIDs.contains($0.id) }
     }
@@ -278,11 +273,11 @@ enum Core {
         }.joined(separator: "\n")
     }
 
-    /// Splits an answer like "지원하다, 신청하다" into the answers that are accepted. Any one of
-    /// them completes the card. A comma between two digits ("1,000") does not split.
-    static func alternatives(_ answer: String) -> [String] {
+    /// The meanings of an answer like "지원하다, 신청하다". All of them are typed, in order. A
+    /// sentence (ending in . ? or !) is one meaning, and a comma between two digits ("1,000")
+    /// does not split.
+    static func meanings(_ answer: String) -> [String] {
         let s = normalize(answer).trimmingCharacters(in: .whitespaces)
-        // A sentence is one answer: its commas are part of it.
         if s.range(of: #"[.?!][\s"')\]]*$"#, options: .regularExpression) != nil { return [s] }
         let chars = Array(s)
         var parts: [String] = []
@@ -297,25 +292,47 @@ enum Core {
             }
         }
         parts.append(current)
-        var seen: Set<String> = []
-        let clean = parts.map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && seen.insert($0).inserted }
+        let clean = parts.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         return clean.count > 1 ? clean : [s]
     }
 
-    /// The accepted answer the typed text is heading for: the one sharing the longest prefix.
-    static func pickTarget(_ alts: [String], typed: String) -> String {
-        guard alts.count > 1 else { return alts.first ?? "" }
-        let t = Array(typed)
-        var best = alts[0]
-        var bestLen = -1
-        for alt in alts {
-            let a = Array(alt)
-            var k = 0
-            while k < t.count && k < a.count && a[k] == t[k] { k += 1 }
-            if k > bestLen { best = alt; bestLen = k }
+    /// What is typed for an answer: its meanings joined by ", ", and where those separators sit.
+    struct TypingTarget: Equatable {
+        let text: String
+        /// Character positions of the ", " between meanings, which fill in by themselves.
+        let auto: Set<Int>
+
+        init(_ answer: String) {
+            let parts = Core.meanings(answer)
+            var auto: Set<Int> = []
+            var at = 0
+            for (k, p) in parts.enumerated() {
+                at += p.count
+                if k < parts.count - 1 { auto.insert(at); auto.insert(at + 1); at += 2 }
+            }
+            text = parts.joined(separator: ", ")
+            self.auto = auto
         }
-        return best
+    }
+
+    /// Lines the typed text up with the target and fills in the ", " between meanings, which the
+    /// user does not have to type (typing it is fine too). Returns the text as it reads on the
+    /// card, and how many typed characters spelled out the whole target (nil until they do).
+    static func fillSeparators(_ target: TypingTarget, typed: String, composing: Bool) -> (shown: String, used: Int?) {
+        let t = Array(target.text)
+        let u = Array(typed)
+        var shown = ""
+        var i = 0
+        var used: Int?
+        for (j, ch) in u.enumerated() {
+            while i < t.count && target.auto.contains(i) && ch != t[i] { shown.append(t[i]); i += 1 }
+            shown.append(ch)
+            i += 1
+            if used == nil && i == t.count && shown == target.text { used = j + 1 }
+        }
+        // A meaning that is finished moves the caret past the ", " right away.
+        if !composing { while i < t.count && target.auto.contains(i) { shown.append(t[i]); i += 1 } }
+        return (shown, used)
     }
 
     static func diff(answer: String, typed: String, composing: Bool) -> [CharDiff] {
@@ -347,14 +364,14 @@ final class Session {
     struct Item: Identifiable, Equatable {
         let id: Int
         let q: String
+        /// The answer as typed: its meanings joined by ", ".
         let a: String
-        /// Accepted answers: `a` split on commas.
-        let alts: [String]
+        let target: Core.TypingTarget
         /// 메모 shown with the card; empty when the card has none.
         var note: String = ""
     }
 
-    enum Outcome { case none, advance, reveal, shake }
+    enum Outcome { case none, reveal, shake }
 
     static let requeueGap = 4
     static let maxRequeues = 3
@@ -363,6 +380,8 @@ final class Session {
     private(set) var queue: [Int]
     private(set) var pos = 0
     private(set) var typed = ""
+    /// `typed` with the ", " between meanings filled in.
+    private(set) var shown = ""
     private(set) var composing = false
     private(set) var revealed = false
     private(set) var hadError = false
@@ -392,33 +411,17 @@ final class Session {
 
     init<R: RandomNumberGenerator>(cards: [Card], shuffle: Bool, reverse: Bool, using rng: inout R) {
         let built = cards.enumerated().map { i, card in
-            let answer = Core.normalize(reverse ? card.key : card.value)
-            return Item(id: i, q: reverse ? card.value : card.key, a: answer, alts: Core.alternatives(answer), note: card.note)
+            let target = Core.TypingTarget(reverse ? card.key : card.value)
+            return Item(id: i, q: reverse ? card.value : card.key, a: target.text, target: target, note: card.note)
         }
         let order = Array(built.indices)
         items = built
         queue = shuffle ? order.shuffled(using: &rng) : order
     }
 
-    /// The accepted answer the current input is compared with.
-    var target: String { current.map { Core.pickTarget($0.alts, typed: typed) } ?? "" }
-
-    /// True when `text` is an accepted answer and no longer accepted answer starts with it,
-    /// so the card can finish without waiting for Return.
-    private func isComplete(_ text: String, _ card: Item) -> Bool {
-        card.alts.contains(text) && !card.alts.contains { $0 != text && $0.hasPrefix(text) }
-    }
-
-    /// The input is an accepted answer, but a longer one starts with it, so Return finishes it.
-    var awaitingReturn: Bool { current.map { !typed.isEmpty && $0.alts.contains(typed) } ?? false }
-
     var finished: Bool { pos >= queue.count }
     var current: Item? { finished ? nil : items[queue[pos]] }
     var remaining: Int { queue.count - pos }
-
-    func upcoming(_ n: Int) -> [Item] {
-        queue.dropFirst(pos + 1).prefix(n).map { items[$0] }
-    }
 
     func keystroke(at now: TimeInterval) {
         guard !finished else { return }
@@ -432,12 +435,13 @@ final class Session {
         guard let card = current else { return false }
         typed = Core.normalize(text)
         self.composing = composing
+        shown = Core.fillSeparators(card.target, typed: typed, composing: composing).shown
         if !typed.isEmpty && cardStart == nil { cardStart = now }
-        if isComplete(typed, card) {
+        if shown == card.a {
             complete(at: now)
             return true
         }
-        if Core.diff(answer: target, typed: typed, composing: composing)
+        if Core.diff(answer: card.a, typed: shown, composing: composing)
             .contains(where: { $0.state == .bad || $0.state == .extra }) {
             hadError = true
         }
@@ -448,15 +452,12 @@ final class Session {
     func feed(_ text: String, composing: Bool, at now: TimeInterval) -> (advanced: Int, rest: String) {
         var t = Core.normalize(text)
         var advanced = 0
-        func overflowing() -> String? {
-            guard let card = current, !composing else { return nil }
-            return card.alts.sorted { $0.count > $1.count }.first { t.count > $0.count && t.hasPrefix($0) }
-        }
-        while let alt = overflowing() {
+        while let card = current, !composing,
+              let used = Core.fillSeparators(card.target, typed: t, composing: false).used, used < t.count {
             if cardStart == nil { cardStart = now }
             complete(at: now)
             advanced += 1
-            t = String(t.dropFirst(alt.count))
+            t = String(t.dropFirst(used))
         }
         if finished { return (advanced, "") }
         if advanced > 0 && t.isEmpty { return (advanced, "") }
@@ -464,14 +465,9 @@ final class Session {
         return (advanced, t)
     }
 
-    /// Return key. Accepts an answer that is complete but also starts a longer one ("지원" when
-    /// "지원하다" is accepted too). Otherwise reveals the answer the first time.
-    func submit(at now: TimeInterval) -> Outcome {
-        guard let card = current else { return .none }
-        if !typed.isEmpty && !composing && card.alts.contains(typed) {
-            complete(at: now)
-            return .advance
-        }
+    /// Return key. Reveals the answer the first time.
+    func submit() -> Outcome {
+        guard current != nil else { return .none }
         if revealed { return .shake }
         revealed = true
         return .reveal
@@ -505,6 +501,7 @@ final class Session {
         }
         pos += 1
         typed = ""
+        shown = ""
         composing = false
         revealed = false
         hadError = false

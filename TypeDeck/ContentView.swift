@@ -15,7 +15,7 @@ struct ContentView: View {
         } detail: {
             PracticeView()
         }
-        .fileImporter(isPresented: $model.showPDFImporter, allowedContentTypes: [.pdf, .text]) { result in
+        .fileImporter(isPresented: $model.showFileImporter, allowedContentTypes: [.pdf, .text]) { result in
             if case .success(let url) = result { model.importFile(at: url) }
         }
         .overlay {
@@ -47,8 +47,8 @@ struct ContentView: View {
             DeckEditorView(target: target)
                 .id(target)
         }
-        .sheet(item: $model.deckPicker, onDismiss: { model.refocus() }) { mode in
-            DeckPickerView(mode: mode)
+        .sheet(isPresented: $model.showWelcome, onDismiss: { model.refocus() }) {
+            WelcomeView()
         }
         .confirmationDialog(
             "'\(pendingDelete?.name ?? "")' 덱을 삭제할까요?",
@@ -122,9 +122,6 @@ struct ContentView: View {
                     Button("자료로 덱 만들기…") { model.startImport(into: group.category) }
                     Button("이름 바꾸기…") { model.categoryPrompt = .rename(group.category) }
                     Divider()
-                    Button("모두 펼치기") { model.setAllCategories(open: true) }
-                    Button("모두 접기") { model.setAllCategories(open: false) }
-                    Divider()
                     Button("카테고리 삭제…", role: .destructive) { pendingCategory = group.category }
                 }
                 if isOpen && group.decks.isEmpty {
@@ -172,16 +169,6 @@ struct ContentView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                if model.groups.count > 1 {
-                    Button(model.allCategoriesCollapsed ? "모두 펼치기" : "모두 접기") {
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            model.setAllCategories(open: model.allCategoriesCollapsed)
-                        }
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
-                    .help("모든 카테고리를 한 번에 접거나 펼칩니다 (⌥⌘← / ⌥⌘→)")
-                }
                 Menu {
                     Button("새 덱") { model.editorTarget = .new }
                     Button("새 카테고리…") { model.categoryPrompt = .new }

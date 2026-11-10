@@ -12,7 +12,6 @@ enum Palette {
     static let line = dynamic(light: 0xE4E0D7, dark: 0x2F2C29)
     static let accent = dynamic(light: 0xFF5B1F, dark: 0xFF7A45)
     static let bad = dynamic(light: 0xE5484D, dark: 0xFF6B6F)
-    static let good = dynamic(light: 0x2F9E5B, dark: 0x4CC27C)
 
     private static func dynamic(light: UInt32, dark: UInt32) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in

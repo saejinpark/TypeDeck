@@ -43,8 +43,8 @@ struct CoreTests {
 
     @Test func revealAndSkipCountAsMisses() {
         let s = Session(cards: [Card("a", "1"), Card("b", "2")], shuffle: false)
-        #expect(s.submit(at: 0) == .reveal)
-        #expect(s.submit(at: 0) == .shake)
+        #expect(s.submit() == .reveal)
+        #expect(s.submit() == .shake)
         #expect(s.input("1", composing: false, at: 1))
         s.skip(at: 2)
         #expect(s.accuracy == 0)
@@ -143,19 +143,16 @@ struct EditorRowsTests {
 }
 
 struct SeedTests {
-    @Test func migrationReplacesRetiredDecksOnce() {
-        let seed = [Deck(id: "toeic-basic-01", name: "T", category: "토익", cards: [Card("a", "1")]),
-                    Deck(id: "toeic-mid-01", name: "U", cards: [Card("b", "2")])]
-        let old = [Deck(id: "proverbs", name: "P", cards: []), Deck(id: "mine", name: "M", cards: [Card("x", "y")])]
-        let next = Seed.migrate(old, from: 1, seed: seed)
-        #expect(next.map(\.id) == ["toeic-basic-01", "toeic-mid-01", "mine"])
+    @Test func migrationAddsOnlyNewerBuiltInDecks() {
+        let seed = [Deck(id: "toeic-basic-01", name: "T", category: "토익", cards: [Card("a", "1")], since: 3),
+                    Deck(id: "en-sent-01", name: "S", category: "영어 문장", cards: [Card("ko", "en.", note: "메모")], since: 5)]
+        let mine = Deck(id: "mine", name: "M", cards: [])
+        // Data from before the sentence decks gets them (with their 메모), but not a deleted TOEIC deck.
+        let next = Seed.migrate([mine], from: 4, seed: seed)
+        #expect(next.map(\.id) == ["en-sent-01", "mine"])
+        #expect(next[0].cards[0].note == "메모")
+        #expect(next[0].since == nil, "since stays in the seed, not in the user's list")
         #expect(Seed.migrate(next, from: Seed.version, seed: seed) == next)
-        let v2 = [Deck(id: "toeic-1", name: "old", cards: []), Deck(id: "toefl-1", name: "F", cards: []),
-                  Deck(id: "mine", name: "M", cards: [])]
-        #expect(Seed.migrate(v2, from: 2, seed: seed).map(\.id) == ["toeic-basic-01", "toeic-mid-01", "mine"])
-        let v3 = [Deck(id: "toeic-basic-01", name: "T", cards: []), Deck(id: "toefl-2", name: "F", cards: []),
-                  Deck(id: "mine", name: "M", cards: [])]
-        #expect(Seed.migrate(v3, from: 3, seed: seed).map(\.id) == ["toeic-basic-01", "mine"])
     }
 
     @Test func groupingKeepsOrderAndPutsUncategorizedLast() {
@@ -195,42 +192,44 @@ struct PDFChunkTests {
 }
 
 struct MultipleMeaningTests {
-    @Test func alternativesSplitOnCommasButKeepNumbers() {
-        #expect(Core.alternatives("지원하다, 신청하다") == ["지원하다", "신청하다"])
-        #expect(Core.alternatives("지원하다,신청하다 ,") == ["지원하다", "신청하다"])
-        #expect(Core.alternatives("1,000") == ["1,000"])
-        #expect(Core.alternatives("apply") == ["apply"])
-        #expect(Core.pickTarget(["지원하다", "신청하다"], typed: "신") == "신청하다")
-        #expect(Core.pickTarget(["지원하다", "신청하다"], typed: "") == "지원하다")
+    @Test func meaningsSplitOnCommasButKeepNumbers() {
+        #expect(Core.meanings("지원하다, 신청하다") == ["지원하다", "신청하다"])
+        #expect(Core.meanings("지원하다,신청하다 ,") == ["지원하다", "신청하다"])
+        #expect(Core.meanings("1,000") == ["1,000"])
+        #expect(Core.meanings("apply") == ["apply"])
+        #expect(Core.TypingTarget("지원하다,신청하다").text == "지원하다, 신청하다")
     }
 
-    @Test func anyMeaningCompletesTheCard() {
-        let s = Session(cards: [Card("apply", "지원하다, 신청하다"), Card("hire", "고용하다")], shuffle: false)
-        #expect(!s.input("신청", composing: false, at: 0))
-        #expect(s.target == "신청하다")
+    @Test func everyMeaningIsTypedAndTheCommaFillsIn() {
+        let target = Core.TypingTarget("줄, 노선, 제품군")
+        #expect(Core.fillSeparators(target, typed: "줄", composing: false).shown == "줄, ")
+        #expect(Core.fillSeparators(target, typed: "줄", composing: true).shown == "줄")
+        #expect(Core.fillSeparators(target, typed: "줄노선", composing: false).shown == "줄, 노선, ")
+        #expect(Core.fillSeparators(target, typed: "줄, 노선", composing: false).shown == "줄, 노선, ")
+        #expect(Core.fillSeparators(target, typed: "줄,노선", composing: false).shown == "줄, 노선, ")
+        let s = Session(cards: [Card("line", "줄, 노선, 제품군"), Card("hire", "고용하다")], shuffle: false)
+        #expect(!s.input("줄", composing: false, at: 0), "the first meaning alone is not enough")
+        #expect(!s.input("줄노선", composing: false, at: 1))
         #expect(!s.hadError)
-        #expect(s.input("신청하다", composing: false, at: 10))
+        #expect(s.input("줄노선제품군", composing: false, at: 2))
         #expect(s.current?.q == "hire")
         #expect(s.streak == 1)
     }
 
-    @Test func meaningThatStartsALongerOneWaitsForReturn() {
-        let s = Session(cards: [Card("a", "지원, 지원하다"), Card("b", "x")], shuffle: false)
-        #expect(!s.input("지원", composing: false, at: 0))
-        #expect(s.submit(at: 5) == .advance)
-        #expect(s.current?.q == "b")
-        #expect(s.streak == 1)
-        let t = Session(cards: [Card("a", "지원, 지원하다"), Card("b", "x")], shuffle: false)
-        #expect(t.input("지원하다", composing: false, at: 0))
+    @Test func aWrongMeaningIsAnErrorAtItsOwnPlace() {
+        let s = Session(cards: [Card("line", "줄, 노선")], shuffle: false)
+        s.input("줄노산", composing: false, at: 0)
+        #expect(s.shown == "줄, 노산")
+        #expect(s.hadError)
+        #expect(Core.diff(answer: s.current!.a, typed: s.shown, composing: false).map(\.state) == [.ok, .ok, .ok, .ok, .bad])
     }
 
-    @Test func pastedTextCarriesOverPastAShortMeaning() {
+    @Test func pastedTextCarriesOverToTheNextCards() {
         let s = Session(cards: [Card("a", "가, 나"), Card("b", "다"), Card("c", "라")], shuffle: false)
-        let r = s.feed("나다라", composing: false, at: 0)
+        let r = s.feed("가나다라", composing: false, at: 0)
         #expect(r.advanced == 3)
         #expect(s.finished)
     }
-
 }
 
 @MainActor
@@ -253,11 +252,11 @@ struct SidebarStateTests {
 
     @Test func firstLaunchAsksBeforeAddingDecks() {
         let model = makeModel(seedVersion: nil, collapsed: nil, deck: nil)
-        #expect(model.deckPicker == .welcome)
+        #expect(model.showWelcome)
         #expect(model.decks.isEmpty)
         let n = model.finishWelcome(sampleCategories: ["토익 기초 (600+)", "토익 숙어"])
         #expect(n == 32)
-        #expect(model.deckPicker == nil)
+        #expect(!model.showWelcome)
         #expect(model.selectedDeckID == "toeic-basic-01")
         #expect(model.collapsedCategories == ["토익 숙어"])
     }
@@ -272,8 +271,7 @@ struct SidebarStateTests {
     @Test func deletingACategoryRemovesItsDecks() {
         let model = makeModel(seedVersion: nil, collapsed: nil, deck: nil)
         model.finishWelcome(sampleCategories: Set(Seed.group(model.seed).map(\.category)))
-        #expect(!model.decks.contains { $0.id.hasPrefix("toefl") })
-        model.deleteCategory("토익 기초 (600+)")
+                model.deleteCategory("토익 기초 (600+)")
         #expect(!model.decks.contains { $0.category == "토익 기초 (600+)" })
         #expect(model.selectedDeck?.category == "토익 중급 (800+)")
         #expect(model.decks.first?.id == "toeic-mid-01")
@@ -285,14 +283,15 @@ struct SidebarStateTests {
         #expect(model.collapsedCategories == ["토플"])
     }
 
-    @Test func collapseAllAndSelectReveals() {
+    @Test func selectingADeckOpensItsCategory() {
         let model = makeModel(seedVersion: Seed.version, collapsed: [], deck: "toeic-adv-05")
-        model.setAllCategories(open: false)
-        #expect(model.allCategoriesCollapsed)
-        model.select("toefl-1")
-        #expect(!model.collapsedCategories.contains("토플"))
-        model.setAllCategories(open: true)
-        #expect(model.collapsedCategories.isEmpty)
+        model.toggleCategory("영어 문장 (문법)")
+        #expect(model.collapsedCategories.contains("영어 문장 (문법)"))
+        model.select("en-sent-02")
+        #expect(!model.collapsedCategories.contains("영어 문장 (문법)"))
+        model.toggleCategory("영어 문장 (문법)")
+        model.toggleCategory("영어 문장 (문법)")
+        #expect(!model.collapsedCategories.contains("영어 문장 (문법)"))
     }
 }
 
@@ -333,7 +332,7 @@ struct CategoryListTests {
         let r = Core.parseImport(csv, fileName: "w.csv")
         #expect(r.cards == [Card("apply", "지원하다, 신청하다"), Card("hire", "고용하다"), Card("say \"hi\"", "인사")])
         #expect(r.skipped == 1)
-        #expect(Core.parseImport("a,b,\"해설 첫 줄\n둘째 줄\"\nc,d", fileName: "x.CSV").cards == [Card("a", "b", note: "해설 첫 줄\n둘째 줄"), Card("c", "d")])
+        #expect(Core.parseImport("a,b,\"메모 첫 줄\n둘째 줄\"\nc,d", fileName: "x.CSV").cards == [Card("a", "b", note: "메모 첫 줄\n둘째 줄"), Card("c", "d")])
         #expect(Core.parseImport("a\t1, 2", fileName: "x.tsv").cards == [Card("a", "1, 2")])
         #expect(Core.parseImport("OSI 7계층 = 물리, 데이터링크", fileName: "notes.txt").cards == [Card("OSI 7계층", "물리, 데이터링크")])
     }
@@ -401,9 +400,9 @@ struct NoteTests {
     }
 
     @Test func sentenceAnswersKeepTheirCommas() {
-        #expect(Core.alternatives("If I had known, I would have come.") == ["If I had known, I would have come."])
-        #expect(Core.alternatives("Yes, I do.") == ["Yes, I do."])
-        #expect(Core.alternatives("지원하다, 신청하다") == ["지원하다", "신청하다"])
+        #expect(Core.meanings("If I had known, I would have come.") == ["If I had known, I would have come."])
+        #expect(Core.meanings("Yes, I do.") == ["Yes, I do."])
+        #expect(Core.meanings("지원하다, 신청하다") == ["지원하다", "신청하다"])
         let s = Session(cards: [Card("내가 알았더라면, 왔을 텐데.", "If I had known, I would have come.")], shuffle: false)
         #expect(!s.input("If I had known,", composing: false, at: 0))
         #expect(!s.hadError)
@@ -413,25 +412,17 @@ struct NoteTests {
 
 struct EditorNoteTests {
     @Test func notesSurviveEditingRows() {
-        var rows = EditorRows(cards: [Card("k", "v", note: "해설")])
-        #expect(rows.cards == [Card("k", "v", note: "해설")])
-        rows.set(rows.rows[0].id, n: "  고친 해설\n둘째 줄  ")
-        #expect(rows.cards == [Card("k", "v", note: "고친 해설\n둘째 줄")])
-        let pasted = rows.paste("a = b\n> 붙여 넣은 해설", at: rows.rows[1].id)
+        var rows = EditorRows(cards: [Card("k", "v", note: "메모")])
+        #expect(rows.cards == [Card("k", "v", note: "메모")])
+        rows.set(rows.rows[0].id, n: "  고친 메모\n둘째 줄  ")
+        #expect(rows.cards == [Card("k", "v", note: "고친 메모\n둘째 줄")])
+        let pasted = rows.paste("a = b\n> 붙여 넣은 메모", at: rows.rows[1].id)
         #expect(pasted.added == 1)
-        #expect(rows.cards.last == Card("a", "b", note: "붙여 넣은 해설"))
+        #expect(rows.cards.last == Card("a", "b", note: "붙여 넣은 메모"))
     }
 }
 
-struct SeedV5Tests {
-    @Test func onlyNewerBuiltInDecksAreAdded() {
-        let seed = [Deck(id: "toeic-basic-01", name: "T", category: "토익", cards: [Card("a", "1")]),
-                    Deck(id: "en-sent-01", name: "S", category: "영어 문장", cards: [Card("ko", "en.", note: "해설")], since: 5)]
-        let v4 = Seed.migrate([Deck(id: "mine", name: "M", cards: [])], from: 4, seed: seed)
-        #expect(v4.map(\.id) == ["en-sent-01", "mine"])
-        #expect(v4[0].cards[0].note == "해설")
-        #expect(Seed.migrate([], from: 2, seed: seed).map(\.id) == ["toeic-basic-01", "en-sent-01"])
-    }
+struct BundledSentenceDeckTests {
 
     @Test func bundledSentenceDecksHaveNotesAndUnsplitAnswers() throws {
         let url = try #require(Bundle(for: Session.self).url(forResource: "decks", withExtension: "json"))
@@ -440,7 +431,7 @@ struct SeedV5Tests {
         #expect(decks.allSatisfy { $0.since == 5 && $0.cards.count == 10 })
         for card in decks.flatMap(\.cards) {
             #expect(!card.note.isEmpty)
-            #expect(Core.alternatives(card.value) == [card.value], "a sentence must stay one answer")
+            #expect(Core.meanings(card.value) == [card.value], "a sentence must stay one answer")
         }
     }
 }

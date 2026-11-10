@@ -50,7 +50,7 @@ function setupSink() {
   sink.addEventListener('blur', () => $('#arena').classList.remove('focused'));
 }
 
-const modalOpen = () => $('#editor').open || $('#picker').open;
+const modalOpen = () => $('#editor').open || $('#welcome').open;
 
 function focusSink() {
   if (!modalOpen() && document.activeElement !== sink) sink.focus({ preventScroll: true });
@@ -122,9 +122,8 @@ function handleCommandKey(e) {
     return true;
   }
   if (key === 'Enter') {
-    const r = session.submit(now);
-    if (r === 'advance') { clearInput(); showNext(); }
-    else if (r === 'reveal') renderFront();
+    const r = session.submit();
+    if (r === 'reveal') renderFront();
     else if (r === 'shake') shake();
   } else if (key === 'Tab') {
     session.skip(now);
@@ -254,7 +253,7 @@ function commitNote() {
   else card.length = 2;
   item.note = text;
   save();
-  note(text ? '메모를 저장했어요' : '메모를 지웠어요');
+  showStatus(text ? '메모를 저장했어요' : '메모를 지웠어요');
 }
 
 function finishNoteEdit(keep) {
@@ -274,34 +273,28 @@ function fillFront(card) {
 function renderAnswer(card = stackEl().querySelector('.card.front')) {
   if (!card || !session?.current) return;
   const answer = card.querySelector('.answer');
-  const { alts } = session.current;
-  const target = session.target;
-  const typed = session.typed;
+  const { a } = session.current;
+  const { shown } = session;
   const showAnswer = store.settings.mode === 'copy' || session.revealed;
   const frag = document.createDocumentFragment();
   let hasError = false;
 
   if (showAnswer) {
-    // Every accepted answer is shown; the one being typed gets the character-by-character view.
-    alts.forEach((alt, k) => {
-      if (k > 0) frag.append(el('span', 'alt', ', '));
-      if (alt !== target) { frag.append(el('span', 'alt', alt)); return; }
-      const parts = diff(alt, typed, session.composing);
-      const caretAt = chars(typed).length;
-      parts.forEach((p, i) => {
-        if (i === caretAt) frag.append(el('span', 'caret'));
-        const shown = p.state === 'extra' || p.state === 'comp' ? p.typed ?? p.ch : p.ch;
-        frag.append(el('span', p.state, shown));
-        if (p.state === 'bad' || p.state === 'extra') hasError = true;
-      });
-      if (caretAt >= parts.length) frag.append(el('span', 'caret'));
+    // The ", " between meanings is part of the answer and fills in as each meaning is finished.
+    const parts = diff(a, shown, session.composing);
+    const caretAt = chars(shown).length;
+    parts.forEach((p, i) => {
+      if (i === caretAt) frag.append(el('span', 'caret'));
+      const text = p.state === 'extra' || p.state === 'comp' ? p.typed ?? p.ch : p.ch;
+      frag.append(el('span', p.state, text));
+      if (p.state === 'bad' || p.state === 'extra') hasError = true;
     });
+    if (caretAt >= parts.length) frag.append(el('span', 'caret'));
   } else {
-    if (typed) frag.append(el('span', 'typed', typed));
+    if (shown) frag.append(el('span', 'typed', shown));
     frag.append(el('span', 'caret'));
-    if (!typed) frag.append(el('span', 'recall-hint', '기억나는 대로 입력'));
+    if (!shown) frag.append(el('span', 'recall-hint', '기억나는 대로 입력'));
   }
-  if (session.awaitingEnter) frag.append(el('span', 'recall-hint enter-hint', 'Enter ↵ 로 넘기기'));
   answer.replaceChildren(frag);
   card.classList.toggle('has-error', hasError);
 }
@@ -471,10 +464,6 @@ function renderDeckList() {
     list.append(section);
   }
   if (catEdit?.mode === 'new') list.append(categoryInput(''));
-  const allClosed = groups.every((g) => collapsed.has(g.category));
-  const toggle = $('#toggleGroups');
-  toggle.textContent = allClosed ? '모두 펼치기' : '모두 접기';
-  toggle.hidden = groups.length < 2;
   const deck = currentDeck();
   $('#deckName').textContent = deck ? deck.name : 'TypeDeck';
   $('#editDeck').hidden = !deck;
@@ -576,13 +565,13 @@ function commitCategory(value) {
   const name = cleanCategory(value);
   const existing = syncCategories(store.categories, store.decks);
   if (!name) return true;
-  if (name === UNCATEGORIZED) { note(`'${UNCATEGORIZED}'는 쓸 수 없는 이름이에요`); return false; }
+  if (name === UNCATEGORIZED) { showStatus(`'${UNCATEGORIZED}'는 쓸 수 없는 이름이에요`); return false; }
   if (catEdit?.mode === 'new') {
-    if (existing.includes(name)) { note('이미 있는 카테고리예요'); return false; }
+    if (existing.includes(name)) { showStatus('이미 있는 카테고리예요'); return false; }
     store.categories = [...existing, name];
     store.settings.collapsed = (store.settings.collapsed ?? []).filter((c) => c !== name);
     save();
-    note(`'${name}' 카테고리를 만들었어요`);
+    showStatus(`'${name}' 카테고리를 만들었어요`);
     return true;
   }
   const from = catEdit.key;
@@ -621,15 +610,7 @@ function deleteCategory(key) {
   }
   if (!confirm(`'${label}' 카테고리와 그 안의 덱 ${list.length}개를 모두 삭제할까요?\n되돌릴 수 없어요.`)) return;
   removeDecks(new Set(list.map((d) => d.id)), key);
-  note(`덱 ${list.length}개를 삭제했어요`);
-}
-
-function toggleAllGroups() {
-  const keys = groupDecks(store.decks, store.categories).map((g) => g.category);
-  const collapsed = new Set(store.settings.collapsed ?? []);
-  store.settings.collapsed = keys.every((k) => collapsed.has(k)) ? [] : keys;
-  save();
-  renderDeckList();
+  showStatus(`덱 ${list.length}개를 삭제했어요`);
 }
 
 /** Opens the category of `deckId` so the selected deck is visible. */
@@ -665,8 +646,8 @@ function selectDeck(id) {
   current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
-function note(text) {
-  const n = $('#sidebarNote');
+function showStatus(text) {
+  const n = $('#sidebarStatus');
   n.textContent = text;
   clearTimeout(note.t);
   note.t = setTimeout(() => { n.textContent = ''; }, 2500);
@@ -716,27 +697,27 @@ function deleteDeck(id) {
 /* ---------- first run: optional TOEIC sample decks ---------- */
 
 function openWelcome() {
-  const dlg = $('#picker');
-  const cats = seedCategories(seed, store.decks);
-  $('#pickerTitle').textContent = 'TypeDeck에 오신 걸 환영해요';
-  $('#pickerLead').textContent = '외울 것을 카드로 만들어 손으로 치면서 익혀요. 키를 보고 값을 치면 바로 다음 카드로 넘어가요. 자격증, 외국어, 용어처럼 공부할 주제마다 카테고리를 만들고 덱으로 정리하세요. 먼저 써 볼 수 있게 예시 덱을 넣어 둘까요?';
-  const list = $('#pickerList');
+  const dlg = $('#welcome');
+  const cats = seedCategories(seed);
+  $('#welcomeTitle').textContent = 'TypeDeck에 오신 걸 환영해요';
+  $('#welcomeLead').textContent = '외울 것을 카드로 만들어 손으로 치면서 익혀요. 키를 보고 값을 치면 바로 다음 카드로 넘어가요. 자격증, 외국어, 용어처럼 공부할 주제마다 카테고리를 만들고 덱으로 정리하세요. 먼저 써 볼 수 있게 예시 덱을 넣어 둘까요?';
+  const list = $('#welcomeList');
   list.replaceChildren();
   for (const c of cats) {
-    const row = el('label', 'picker-row');
+    const row = el('label', 'welcome-row');
     const box = el('input');
     box.type = 'checkbox';
     box.value = c.category;
     box.checked = true;
-    const text = el('span', 'picker-text');
+    const text = el('span', 'welcome-text');
     text.append(el('b', '', c.category || UNCATEGORIZED),
-      el('small', '', `덱 ${c.decks.length}개 · ${c.words.toLocaleString('ko-KR')}장`));
+      el('small', '', `덱 ${c.decks.length}개 · ${c.cardCount.toLocaleString('ko-KR')}장`));
     row.append(box, text);
     box.addEventListener('change', update);
     list.append(row);
   }
-  const ok = $('#pickerOk');
-  $('#pickerSkip').textContent = '빈 상태로 시작';
+  const ok = $('#welcomeOk');
+  $('#welcomeSkip').textContent = '빈 상태로 시작';
   function update() {
     ok.textContent = list.querySelector('input:checked') ? '예시 넣고 시작' : '빈 상태로 시작';
   }
@@ -746,7 +727,7 @@ function openWelcome() {
     dlg.close();
     finishWelcome(cats.filter((c) => chosen.has(c.category)).flatMap((c) => c.decks).map(cloneDeck));
   };
-  $('#pickerSkip').onclick = () => { dlg.close(); finishWelcome([]); };
+  $('#welcomeSkip').onclick = () => { dlg.close(); finishWelcome([]); };
   // The first run has to end with a choice; Esc does not just dismiss it.
   dlg.oncancel = (e) => e.preventDefault();
   dlg.showModal();
@@ -817,9 +798,8 @@ function bindUI() {
     save(); renderControls(); startSession();
   });
   setupAddMenu();
-  $('#toggleGroups').addEventListener('click', toggleAllGroups);
   $('#editDeck').addEventListener('click', () => openEditor(store.settings.deckId));
-  $('#picker').addEventListener('close', () => setTimeout(focusSink, 0));
+  $('#welcome').addEventListener('close', () => setTimeout(focusSink, 0));
 
   setupEditor();
   $('#editor').addEventListener('close', () => setTimeout(focusSink, 0));
@@ -833,7 +813,6 @@ async function boot() {
   const saved = loadSaved();
   // Before seed 3 there were only a few decks; now only the current deck's category starts open.
   const firstRun = !(saved && Array.isArray(saved.decks));
-  const startCollapsed = firstRun || (saved.seedVersion ?? 1) < 3;
   if (!firstRun) {
     store = {
       decks: migrateDecks(saved.decks, saved.seedVersion, seed),
@@ -849,7 +828,6 @@ async function boot() {
   }
   store.categories = syncCategories(store.categories, store.decks);
   if (!currentDeck()) store.settings.deckId = store.decks[0]?.id ?? null;
-  if (startCollapsed) store.settings.collapsed = collapsedExcept(store.decks, store.settings.deckId);
   revealDeck(store.settings.deckId);
   if (!firstRun) save();
   setupSink();
@@ -862,6 +840,4 @@ async function boot() {
 }
 
 // Read-only handle for debugging in the console.
-Object.defineProperty(window, 'typedeck', { get: () => ({ session, store }) });
-
 boot();
