@@ -53,23 +53,37 @@
   </div>
 
   <dialog class="editor" id="editor">
-    <form method="dialog" id="editorForm">
-      <h2 id="editorTitle">덱 편집</h2>
+    <div class="editor-inner">
+      <div class="editor-head">
+        <h2 id="editorTitle">덱 편집</h2>
+        <div class="segmented small" id="editorView" role="radiogroup" aria-label="편집 방식">
+          <button type="button" role="radio" data-view="rows">표</button>
+          <button type="button" role="radio" data-view="text">텍스트</button>
+        </div>
+      </div>
       <label class="field">
         <span>이름</span>
-        <input id="editorName" required maxlength="60" autocomplete="off">
+        <input id="editorName" maxlength="60" autocomplete="off" placeholder="덱 이름">
       </label>
-      <label class="field">
-        <span>카드 <em id="editorCount">0장</em></span>
-        <textarea id="editorCards" rows="14" spellcheck="false" placeholder="한 줄에 카드 하나: 키 = 값&#10;대한민국 = 서울&#10;404 = Not Found&#10;&#10;탭, =, : 로 나눠도 됩니다. 스프레드시트 두 열을 그대로 붙여 넣어도 돼요."></textarea>
-      </label>
+      <div class="field">
+        <div class="cards-head">
+          <span>카드 <em id="editorCount">0장</em></span>
+          <span class="cards-tip"><kbd>Enter</kbd>다음 칸 · 여러 줄 붙여넣기 가능</span>
+        </div>
+        <div class="card-rows" id="editorRows">
+          <div class="card-rows-header"><span></span><span>키</span><span>값</span><span></span></div>
+          <div class="card-rows-body" id="rowsBody"></div>
+        </div>
+        <textarea id="editorCards" rows="14" spellcheck="false" hidden placeholder="한 줄에 카드 하나: 키 = 값&#10;대한민국 = 서울&#10;404 = Not Found&#10;&#10;탭, =, : 로 나눠도 됩니다. 스프레드시트 두 열을 그대로 붙여 넣어도 돼요."></textarea>
+      </div>
+      <p class="editor-note" id="editorNote" role="status"></p>
       <div class="editor-actions">
         <button type="button" class="danger-btn" id="editorDelete">덱 삭제</button>
         <span class="spacer"></span>
         <button type="button" class="ghost-btn" id="editorCancel">취소</button>
-        <button type="submit" class="primary-btn" id="editorSave">저장</button>
+        <button type="button" class="primary-btn" id="editorSave">저장 <span class="shortcut">⌘↵</span></button>
       </div>
-    </form>
+    </div>
   </dialog>
 </body>
 </html>

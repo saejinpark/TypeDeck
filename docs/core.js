@@ -7,18 +7,24 @@ const SEPARATORS = ['\t', ' = ', ' : ', '=', ':'];
 
 /** Parses "key = value" lines (tab, " = ", " : ", "=", ":" in that order of preference). */
 export function parseCards(text) {
+  return parseCardsDetailed(text).cards;
+}
+
+/** Like parseCards, but also counts the non-empty lines that had no separator. */
+export function parseCardsDetailed(text) {
   const cards = [];
+  let skipped = 0;
   for (const raw of (text ?? '').split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     const sep = SEPARATORS.find((s) => line.includes(s));
-    if (!sep) continue;
-    const i = line.indexOf(sep);
-    const q = line.slice(0, i).trim();
-    const a = line.slice(i + sep.length).trim();
+    const i = sep ? line.indexOf(sep) : -1;
+    const q = sep ? line.slice(0, i).trim() : '';
+    const a = sep ? line.slice(i + sep.length).trim() : '';
     if (q && a) cards.push([q, a]);
+    else skipped++;
   }
-  return cards;
+  return { cards, skipped };
 }
 
 export function serializeCards(cards) {

@@ -138,3 +138,11 @@ test('tracker: committed overflow and plain resets', () => {
   t.reset();
   assert.equal(t.segment('abc'), 'abc');
 });
+
+import { parseCardsDetailed } from '../docs/core.js';
+
+test('parseCardsDetailed counts lines it could not use', () => {
+  const r = parseCardsDetailed('a = 1\nno separator\n\n# note\nb =\nc\t3');
+  assert.deepEqual(r.cards, [['a', '1'], ['c', '3']]);
+  assert.equal(r.skipped, 2);
+});

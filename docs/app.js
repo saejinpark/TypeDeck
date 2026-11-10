@@ -1,4 +1,5 @@
-import { Session, InputTracker, diff, parseCards, serializeCards, chars } from './core.js';
+import { Session, InputTracker, diff, chars } from './core.js';
+import { setupEditor, openEditor as openDeckEditor, closeEditor } from './editor.js';
 
 const STORE_KEY = 'typedeck.v1';
 const $ = (sel) => document.querySelector(sel);
@@ -17,7 +18,6 @@ let sink = null;
 const tracker = new InputTracker();
 let composing = false;
 let compositionText = '';
-let editingId = null;
 
 /* ---------- storage ---------- */
 
@@ -366,45 +366,35 @@ function note(text) {
 /* ---------- editor ---------- */
 
 function openEditor(id) {
-  editingId = id;
   const deck = id ? store.decks.find((d) => d.id === id) : null;
-  $('#editorTitle').textContent = deck ? '덱 편집' : '새 덱';
-  $('#editorName').value = deck ? deck.name : '';
-  $('#editorCards').value = deck ? serializeCards(deck.cards) : '';
-  $('#editorDelete').hidden = !deck;
-  updateEditorCount();
-  $('#editor').showModal();
-  (deck ? $('#editorCards') : $('#editorName')).focus();
+  openDeckEditor(deck, {
+    onSave: ({ name, cards }) => saveDeck(id, name, cards),
+    onDelete: () => deleteDeck(id),
+  });
 }
 
-function updateEditorCount() {
-  $('#editorCount').textContent = `${parseCards($('#editorCards').value).length}장`;
-}
-
-function saveEditor() {
-  const name = $('#editorName').value.trim() || '새 덱';
-  const cards = parseCards($('#editorCards').value);
-  if (editingId) {
-    const deck = store.decks.find((d) => d.id === editingId);
-    deck.name = name;
+function saveDeck(id, name, cards) {
+  const deck = id ? store.decks.find((d) => d.id === id) : null;
+  if (deck) {
+    deck.name = name || deck.name;
     deck.cards = cards;
   } else {
-    const id = `d${Date.now().toString(36)}`;
-    store.decks.push({ id, name, cards });
-    store.settings.deckId = id;
+    const newId = `d${Date.now().toString(36)}`;
+    store.decks.push({ id: newId, name: name || '새 덱', cards });
+    store.settings.deckId = newId;
   }
   save();
   renderDeckList();
   startSession();
 }
 
-function deleteEditing() {
-  const deck = store.decks.find((d) => d.id === editingId);
+function deleteDeck(id) {
+  const deck = store.decks.find((d) => d.id === id);
   if (!deck || !confirm(`'${deck.name}' 덱을 삭제할까요? 되돌릴 수 없어요.`)) return;
-  store.decks = store.decks.filter((d) => d.id !== editingId);
-  if (store.settings.deckId === editingId) store.settings.deckId = store.decks[0]?.id ?? null;
+  store.decks = store.decks.filter((d) => d.id !== id);
+  if (store.settings.deckId === id) store.settings.deckId = store.decks[0]?.id ?? null;
   save();
-  $('#editor').close();
+  closeEditor();
   renderDeckList();
   startSession();
 }
@@ -458,10 +448,7 @@ function bindUI() {
     note(`${missing.length}개 덱을 되살렸어요`);
   });
 
-  $('#editorCards').addEventListener('input', updateEditorCount);
-  $('#editorForm').addEventListener('submit', () => saveEditor());
-  $('#editorCancel').addEventListener('click', () => $('#editor').close());
-  $('#editorDelete').addEventListener('click', deleteEditing);
+  setupEditor();
   $('#editor').addEventListener('close', () => setTimeout(focusSink, 0));
 }
 

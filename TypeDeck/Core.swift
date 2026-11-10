@@ -52,17 +52,23 @@ enum Core {
 
     /// Parses "key = value" lines. Tab, " = ", " : ", "=", ":" are tried in that order.
     static func parseCards(_ text: String) -> [Card] {
+        parseCardsDetailed(text).cards
+    }
+
+    /// Like parseCards, but also counts the non-empty lines that had no usable separator.
+    static func parseCardsDetailed(_ text: String) -> (cards: [Card], skipped: Int) {
         var cards: [Card] = []
+        var skipped = 0
         for raw in text.components(separatedBy: .newlines) {
             let line = raw.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty, !line.hasPrefix("#") else { continue }
             guard let sep = separators.first(where: { line.contains($0) }),
-                  let range = line.range(of: sep) else { continue }
+                  let range = line.range(of: sep) else { skipped += 1; continue }
             let key = line[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
             let value = line[range.upperBound...].trimmingCharacters(in: .whitespaces)
-            if !key.isEmpty && !value.isEmpty { cards.append(Card(key, value)) }
+            if !key.isEmpty && !value.isEmpty { cards.append(Card(key, value)) } else { skipped += 1 }
         }
-        return cards
+        return (cards, skipped)
     }
 
     static func serialize(_ cards: [Card]) -> String {

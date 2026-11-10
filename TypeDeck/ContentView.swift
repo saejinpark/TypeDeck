@@ -15,6 +15,7 @@ struct ContentView: View {
         }
         .sheet(item: $model.editorTarget, onDismiss: { model.refocus() }) { target in
             DeckEditorView(target: target)
+                .id(target)
         }
         .confirmationDialog(
             "'\(pendingDelete?.name ?? "")' 덱을 삭제할까요?",

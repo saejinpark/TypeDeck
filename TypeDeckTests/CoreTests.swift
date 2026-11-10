@@ -92,4 +92,49 @@ struct CoreTests {
         #expect(file.decks.count >= 6)
         #expect(file.decks.allSatisfy { !$0.cards.isEmpty })
     }
+
+    @Test func parseCardsDetailedCountsSkippedLines() {
+        let r = Core.parseCardsDetailed("a = 1\nno separator\n\n# note\nb =\nc\t3")
+        #expect(r.cards == [Card("a", "1"), Card("c", "3")])
+        #expect(r.skipped == 2)
+    }
+}
+
+struct EditorRowsTests {
+    @Test func alwaysKeepsOneEmptyRowAtTheEnd() {
+        var rows = EditorRows()
+        #expect(rows.rows.count == 1)
+        rows.set(rows.rows[0].id, q: "대한민국")
+        #expect(rows.rows.count == 2)
+        rows.set(rows.rows[0].id, a: "서울")
+        #expect(rows.cards == [Card("대한민국", "서울")])
+        rows.set(rows.rows[0].id, q: "", a: "")
+        #expect(rows.rows.count == 1)
+    }
+
+    @Test func incompleteRowsAreCountedButNotSaved() {
+        var rows = EditorRows(cards: [Card("a", "1")])
+        rows.set(rows.rows[1].id, q: "b")
+        #expect(rows.incompleteCount == 1)
+        #expect(rows.cards == [Card("a", "1")])
+        #expect(rows.firstIncomplete?.q == "b")
+    }
+
+    @Test func pasteReplacesEmptyRowAndInsertsAfterFilledOne() {
+        var rows = EditorRows(cards: [Card("a", "1")])
+        let r = rows.paste("b\t2\nc = 3\nnope", at: rows.rows[1].id)
+        #expect(r.added == 2 && r.skipped == 1)
+        #expect(rows.cards == [Card("a", "1"), Card("b", "2"), Card("c", "3")])
+        #expect(r.next == rows.rows.last?.id)
+        _ = rows.paste("x = 9", at: rows.rows[0].id)
+        #expect(rows.cards.map(\.key) == ["a", "x", "b", "c"])
+    }
+
+    @Test func removingTheLastCardLeavesTheEmptyRow() {
+        var rows = EditorRows(cards: [Card("a", "1"), Card("b", "2")])
+        rows.remove(rows.rows[0].id)
+        #expect(rows.cards == [Card("b", "2")])
+        rows.remove(rows.rows[1].id) // the empty row: stays
+        #expect(rows.rows.count == 2)
+    }
 }
