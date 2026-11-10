@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>TypeDeck</title>
+  <meta name="description" content="키와 값을 손으로 타이핑하며 외우는 카드 연습기">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="app.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><img src="icon.svg" alt="" width="28" height="28"><span>TypeDeck</span></div>
+      <nav class="deck-list" id="deckList" aria-label="덱 목록"></nav>
+      <div class="sidebar-foot">
+        <button class="ghost-btn keep-focus" id="newDeck" type="button">＋ 새 덱</button>
+        <button class="link-btn keep-focus" id="restoreDecks" type="button">기본 덱 복원</button>
+        <span class="note" id="sidebarNote" role="status"></span>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <header class="topbar">
+        <div class="deck-title">
+          <h1 id="deckName">TypeDeck</h1>
+          <button class="ghost-btn small keep-focus" id="editDeck" type="button">편집</button>
+        </div>
+        <div class="controls">
+          <div class="segmented" role="radiogroup" aria-label="연습 방식">
+            <button class="keep-focus" type="button" role="radio" data-mode="copy">따라치기</button>
+            <button class="keep-focus" type="button" role="radio" data-mode="recall">외워치기</button>
+          </div>
+          <button class="toggle keep-focus" type="button" id="reverseBtn" aria-pressed="false" title="키와 값의 방향을 바꿉니다">⇄ 뒤집기</button>
+          <button class="toggle keep-focus" type="button" id="shuffleBtn" aria-pressed="true" title="카드 순서를 섞습니다">섞기</button>
+        </div>
+      </header>
+
+      <section class="arena" id="arena">
+        <div class="progress"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="stack" id="stack"></div>
+        <input class="sink" id="sinkA" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="정답 입력">
+        <input class="sink" id="sinkB" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="정답 입력" tabindex="-1">
+      </section>
+
+      <footer class="statusbar">
+        <dl class="stats" id="stats"></dl>
+        <p class="hints" id="hints"></p>
+      </footer>
+    </main>
+  </div>
+
+  <dialog class="editor" id="editor">
+    <form method="dialog" id="editorForm">
+      <h2 id="editorTitle">덱 편집</h2>
+      <label class="field">
+        <span>이름</span>
+        <input id="editorName" required maxlength="60" autocomplete="off">
+      </label>
+      <label class="field">
+        <span>카드 <em id="editorCount">0장</em></span>
+        <textarea id="editorCards" rows="14" spellcheck="false" placeholder="한 줄에 카드 하나: 키 = 값&#10;대한민국 = 서울&#10;404 = Not Found&#10;&#10;탭, =, : 로 나눠도 됩니다. 스프레드시트 두 열을 그대로 붙여 넣어도 돼요."></textarea>
+      </label>
+      <div class="editor-actions">
+        <button type="button" class="danger-btn" id="editorDelete">덱 삭제</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost-btn" id="editorCancel">취소</button>
+        <button type="submit" class="primary-btn" id="editorSave">저장</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

@@ -1,0 +1,193 @@
+// TypeDeck core: pure logic shared by the UI and the tests. No DOM access here.
+
+export const normalize = (s) => (s ?? '').normalize('NFC');
+export const chars = (s) => Array.from(s);
+
+const SEPARATORS = ['\t', ' = ', ' : ', '=', ':'];
+
+/** Parses "key = value" lines (tab, " = ", " : ", "=", ":" in that order of preference). */
+export function parseCards(text) {
+  const cards = [];
+  for (const raw of (text ?? '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const sep = SEPARATORS.find((s) => line.includes(s));
+    if (!sep) continue;
+    const i = line.indexOf(sep);
+    const q = line.slice(0, i).trim();
+    const a = line.slice(i + sep.length).trim();
+    if (q && a) cards.push([q, a]);
+  }
+  return cards;
+}
+
+export function serializeCards(cards) {
+  return cards.map(([q, a]) => (q.includes('=') || q.includes(':') ? `${q}\t${a}` : `${q} = ${a}`)).join('\n');
+}
+
+/**
+ * Compares what was typed with the answer, character by character.
+ * States: ok, bad, comp (still being composed by an IME), todo, extra.
+ */
+export function diff(answer, typed, composing) {
+  const a = chars(answer);
+  const t = chars(typed);
+  const out = [];
+  const n = Math.max(a.length, t.length);
+  for (let i = 0; i < n; i++) {
+    const isLastTyped = i === t.length - 1;
+    if (i < t.length && i < a.length) {
+      const state = composing && isLastTyped ? 'comp' : t[i] === a[i] ? 'ok' : 'bad';
+      out.push({ ch: a[i], typed: t[i], state });
+    } else if (i < a.length) {
+      out.push({ ch: a[i], state: 'todo' });
+    } else {
+      out.push({ ch: t[i], state: composing && isLastTyped ? 'comp' : 'extra' });
+    }
+  }
+  return out;
+}
+
+export function shuffled(list, rng = Math.random) {
+  const a = list.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+export const REQUEUE_GAP = 4;
+export const MAX_REQUEUES = 3;
+
+/** One round through a deck. Cards that were missed come back a few cards later. */
+export class Session {
+  constructor(cards, { shuffle = true, reverse = false, rng = Math.random } = {}) {
+    this.items = cards.map(([q, a], id) => ({
+      id,
+      q: reverse ? a : q,
+      a: normalize(reverse ? q : a),
+    }));
+    const order = this.items.map((it) => it.id);
+    this.queue = shuffle ? shuffled(order, rng) : order;
+    this.pos = 0;
+    this.requeues = new Map();
+    this.first = new Map(); // id -> clean on first attempt
+    this.keystrokes = 0;
+    this.activeMs = 0;
+    this.streak = 0;
+    this.bestStreak = 0;
+    this.resetCard();
+  }
+
+  resetCard() {
+    this.typed = '';
+    this.composing = false;
+    this.revealed = false;
+    this.hadError = false;
+    this.cardStart = null;
+  }
+
+  get finished() { return this.pos >= this.queue.length; }
+  get current() { return this.finished ? null : this.items[this.queue[this.pos]]; }
+  get remaining() { return this.queue.length - this.pos; }
+
+  keystroke(now) {
+    if (this.finished) return;
+    this.keystrokes++;
+    if (this.cardStart === null) this.cardStart = now;
+  }
+
+  /** Feed the full text of the input. Returns 'advance' when the answer was completed. */
+  input(text, composing, now) {
+    const card = this.current;
+    if (!card) return 'none';
+    this.typed = normalize(text);
+    this.composing = composing;
+    if (this.typed && this.cardStart === null) this.cardStart = now;
+    if (this.typed === card.a) {
+      this.complete(now);
+      return 'advance';
+    }
+    if (diff(card.a, this.typed, composing).some((d) => d.state === 'bad' || d.state === 'extra')) {
+      this.hadError = true;
+    }
+    return 'none';
+  }
+
+  /**
+   * Like input(), but text that runs past the answer (a paste, or several characters arriving
+   * in one event) completes the card and carries the rest over to the next one.
+   */
+  feed(text, composing, now) {
+    let t = normalize(text);
+    let advanced = 0;
+    while (!this.finished && !composing && t.length > this.current.a.length && t.startsWith(this.current.a)) {
+      const a = this.current.a;
+      this.input(a, false, now);
+      advanced++;
+      t = t.slice(a.length);
+    }
+    if (this.finished) return { advanced, rest: '' };
+    if (advanced && !t) return { advanced, rest: '' };
+    if (this.input(t, composing, now) === 'advance') return { advanced: advanced + 1, rest: '' };
+    return { advanced, rest: t };
+  }
+
+  /** Enter key. Reveals the answer the first time. */
+  submit() {
+    if (this.finished) return 'none';
+    if (this.revealed) return 'shake';
+    this.revealed = true;
+    return 'reveal';
+  }
+
+  /** Tab key. Gives up on the card for now; it comes back later. */
+  skip(now) {
+    if (this.finished) return 'none';
+    this.revealed = true;
+    this.complete(now);
+    return 'advance';
+  }
+
+  complete(now) {
+    const card = this.current;
+    const clean = !this.hadError && !this.revealed;
+    if (!this.first.has(card.id)) this.first.set(card.id, clean);
+    if (this.cardStart !== null) this.activeMs += Math.max(0, now - this.cardStart);
+    if (clean) {
+      this.streak++;
+      this.bestStreak = Math.max(this.bestStreak, this.streak);
+    } else {
+      this.streak = 0;
+      const n = this.requeues.get(card.id) ?? 0;
+      if (n < MAX_REQUEUES) {
+        this.requeues.set(card.id, n + 1);
+        const at = Math.min(this.pos + 1 + REQUEUE_GAP, this.queue.length);
+        this.queue.splice(at, 0, card.id);
+      }
+    }
+    this.pos++;
+    this.resetCard();
+  }
+
+  upcoming(n) {
+    return this.queue.slice(this.pos + 1, this.pos + 1 + n).map((id) => this.items[id]);
+  }
+
+  get missed() {
+    return [...this.first].filter(([, clean]) => !clean).map(([id]) => this.items[id]);
+  }
+
+  get accuracy() {
+    if (this.first.size === 0) return null;
+    const clean = [...this.first.values()].filter(Boolean).length;
+    return clean / this.first.size;
+  }
+
+  /** Keystrokes per minute (Korean "타수"). */
+  get kpm() {
+    if (this.activeMs < 1000) return null;
+    return (this.keystrokes / this.activeMs) * 60000;
+  }
+}
