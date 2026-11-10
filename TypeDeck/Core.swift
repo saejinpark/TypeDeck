@@ -114,6 +114,41 @@ enum Seed {
     }
 
     /// Groups decks by category in order of first appearance; uncategorized decks go last.
+    /// Longest last word (in characters) that still counts as a short label, like "01".
+    static let gridLabelMax = 4
+
+    struct Compact {
+        var prefix = ""
+        var grid: [(deck: Deck, label: String)] = []
+        var rows: [Deck] = []
+    }
+
+    /// Decks whose names differ only in a short last word ("기초 Day 01", "기초 Day 02", ...) are
+    /// shown as a grid of those last words under the shared part. Needs at least three such decks
+    /// with the same shared part; the other decks stay as rows, each in their original order.
+    static func compact(_ decks: [Deck]) -> Compact {
+        func split(_ name: String) -> (prefix: String, label: String)? {
+            let words = name.split(whereSeparator: \.isWhitespace).map(String.init)
+            guard words.count > 1, let label = words.last, label.count <= gridLabelMax else { return nil }
+            return (words.dropLast().joined(separator: " "), label)
+        }
+        var counts: [String: Int] = [:]
+        var order: [String] = []
+        for d in decks {
+            guard let s = split(d.name) else { continue }
+            if counts[s.prefix] == nil { order.append(s.prefix) }
+            counts[s.prefix, default: 0] += 1
+        }
+        guard let prefix = order.max(by: { counts[$0]! < counts[$1]! }), counts[prefix]! >= 3 else {
+            return Compact(rows: decks)
+        }
+        var result = Compact(prefix: prefix)
+        for d in decks {
+            if let s = split(d.name), s.prefix == prefix { result.grid.append((d, s.label)) } else { result.rows.append(d) }
+        }
+        return result
+    }
+
     /// Category names are trimmed and inner runs of spaces collapsed.
     static func clean(_ name: String) -> String {
         name.split(whereSeparator: \.isWhitespace).joined(separator: " ")

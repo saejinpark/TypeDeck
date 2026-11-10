@@ -1,4 +1,4 @@
-import { Session, InputTracker, diff, chars, migrateDecks, groupDecks, collapsedExcept, seedCategories, addSeedDecks, syncCategories, renameCategory, cleanCategory, SEED_VERSION, UNCATEGORIZED } from './core.js';
+import { Session, InputTracker, diff, chars, migrateDecks, groupDecks, compactDecks, collapsedExcept, seedCategories, addSeedDecks, syncCategories, renameCategory, cleanCategory, SEED_VERSION, UNCATEGORIZED } from './core.js';
 import { setupEditor, openEditor as openDeckEditor, closeEditor } from './editor.js';
 
 const STORE_KEY = 'typedeck.v1';
@@ -450,7 +450,24 @@ function renderDeckList() {
       section.append(empty);
     }
     if (isOpen) {
-      for (const deck of group.decks) {
+      const { prefix, grid, rows } = compactDecks(group.decks);
+      if (grid.length) {
+        // Decks that differ only by number: the shared part once, then a grid of numbers.
+        const wrap = el('div', 'deck-grid-wrap');
+        const cells = el('div', 'deck-grid');
+        for (const { deck, label } of grid) {
+          const b = el('button', 'deck-chip keep-focus', label);
+          b.type = 'button';
+          b.title = `${deck.name} · ${deck.cards.length}장`;
+          b.setAttribute('aria-label', deck.name);
+          b.setAttribute('aria-current', String(deck.id === store.settings.deckId));
+          b.addEventListener('click', () => selectDeck(deck.id));
+          cells.append(b);
+        }
+        wrap.append(el('div', 'deck-grid-label', prefix), cells);
+        section.append(wrap);
+      }
+      for (const deck of rows) {
         const b = el('button', 'deck-item keep-focus');
         b.type = 'button';
         b.setAttribute('aria-current', String(deck.id === store.settings.deckId));

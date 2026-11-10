@@ -139,7 +139,16 @@ struct ContentView: View {
                     .selectionDisabled()
                 }
                 if isOpen {
-                    ForEach(group.decks) { deck in
+                    let compact = Seed.compact(group.decks)
+                    if !compact.grid.isEmpty {
+                        DeckGrid(prefix: compact.prefix, items: compact.grid, selectedID: model.selectedDeckID,
+                                 select: { model.select($0) },
+                                 edit: { model.editorTarget = .deck($0) },
+                                 delete: { pendingDelete = $0 })
+                            .padding(.leading, 18)
+                            .selectionDisabled()
+                    }
+                    ForEach(compact.rows) { deck in
                         HStack {
                             Text(deck.name).lineLimit(1)
                             Spacer()
@@ -231,6 +240,48 @@ private struct CategoryHeader: View {
             onAdd.map { HoverActions.Item(icon: "plus", label: "'\(name)'에 새 덱 만들기", action: $0) },
             onDelete.map { HoverActions.Item(icon: "trash", label: "'\(name)' 카테고리 삭제", action: $0) },
         ].compactMap { $0 }))
+    }
+}
+
+/// Decks that differ only by number: the shared name once, then a grid of numbers.
+private struct DeckGrid: View {
+    let prefix: String
+    let items: [(deck: Deck, label: String)]
+    let selectedID: String?
+    let select: (String) -> Void
+    let edit: (String) -> Void
+    let delete: (Deck) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(prefix)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 34), spacing: 4)], spacing: 4) {
+                ForEach(items, id: \.deck.id) { item in
+                    let selected = item.deck.id == selectedID
+                    Button { select(item.deck.id) } label: {
+                        Text(item.label)
+                            .font(.system(size: 12, weight: .semibold))
+                            .monospacedDigit()
+                            .frame(maxWidth: .infinity, minHeight: 26)
+                            .foregroundStyle(selected ? Color.white : Palette.ink)
+                            .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Palette.accent : Color.clear))
+                            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(selected ? Palette.accent : Palette.line))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(item.deck.name) · \(item.deck.cards.count)장")
+                    .accessibilityLabel(item.deck.name)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                    .contextMenu {
+                        Button("편집…") { edit(item.deck.id) }
+                        Button("삭제…", role: .destructive) { delete(item.deck) }
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 

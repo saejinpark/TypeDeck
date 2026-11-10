@@ -85,6 +85,15 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .group-head .group-name { flex: 1; }
 .group-head .count { font-size: 11px; font-weight: 600; }
 .deck-group .deck-item { padding-left: 24px; }
+.deck-grid-wrap { padding: 2px 4px 6px 24px; }
+.deck-grid-label { padding: 2px 0 5px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.deck-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(36px, 1fr)); gap: 4px; }
+.deck-chip {
+  height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: transparent;
+  font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink);
+}
+.deck-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
+.deck-chip[aria-current="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
 .group-row, .deck-row { position: relative; display: flex; align-items: center; min-width: 0; }
 .group-row .group-head, .deck-row .deck-item { flex: 1; min-width: 0; }
 .row-actions {
@@ -326,6 +335,10 @@ kbd {
   .deck-group + .deck-group { margin-top: 0; margin-left: 6px; }
   .group-head { width: auto; white-space: nowrap; }
   .deck-group .deck-item { padding-left: 10px; }
+  .deck-grid-wrap { display: flex; align-items: center; gap: 6px; padding: 0 4px; }
+  .deck-grid-label { padding: 0; white-space: nowrap; }
+  .deck-grid { display: flex; gap: 4px; }
+  .deck-chip { min-width: 34px; }
   .field-row { flex-direction: column; }
   .field-row .field { flex: none; }
   .deck-item .count { display: none; }

@@ -147,7 +147,7 @@ test('parseCardsDetailed counts lines it could not use', () => {
   assert.equal(r.skipped, 2);
 });
 
-import { migrateDecks, groupDecks, collapsedExcept, seedCategories, addSeedDecks, syncCategories, renameCategory, parseImport, SEED_VERSION } from '../docs/core.js';
+import { migrateDecks, groupDecks, compactDecks, collapsedExcept, seedCategories, addSeedDecks, syncCategories, renameCategory, parseImport, SEED_VERSION } from '../docs/core.js';
 
 
 test('migrateDecks adds built-in decks newer than the stored data, once', () => {
@@ -291,4 +291,16 @@ test('bundled sample decks: unique keys per category group and idioms added in v
   assert.equal(phrases.length, 19);
   assert.ok(phrases.filter((d) => d.since === 6).every((d) => Number(d.id.slice(-2)) >= 5), 'old idiom decks keep since 3');
   assert.ok(decks.every((d) => Number.isInteger(d.since)));
+});
+
+test('compactDecks shows numbered decks as a grid under their shared name', () => {
+  const d = (id, name) => ({ id, name, cards: [] });
+  const r = compactDecks([d(1, '기초 Day 01'), d(2, '기초 Day 02'), d(3, '내 단어장'), d(4, '기초 Day 03')]);
+  assert.equal(r.prefix, '기초 Day');
+  assert.deepEqual(r.grid.map((g) => [g.deck.id, g.label]), [[1, '01'], [2, '02'], [4, '03']]);
+  assert.deepEqual(r.rows.map((x) => x.id), [3]);
+  // Names that do not share a part, or too few of them, stay as rows.
+  assert.deepEqual(compactDecks([d(1, '01 시제와 완료'), d(2, '02 조동사와 가정법'), d(3, '03 관계사')]).grid, []);
+  assert.deepEqual(compactDecks([d(1, 'Day 1'), d(2, 'Day 2')]).grid, []);
+  assert.deepEqual(compactDecks([d(1, '단원 첫째이야기'), d(2, '단원 둘째이야기'), d(3, '단원 셋째이야기')]).grid, [], 'labels longer than 4 characters stay as rows');
 });

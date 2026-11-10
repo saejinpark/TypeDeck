@@ -475,3 +475,17 @@ struct PracticeNoteTests {
         #expect(m.selectedDeck?.cards.map(\.note) == ["", "hire = 고용하다"])
     }
 }
+
+struct DeckGridTests {
+    @Test func numberedDecksBecomeAGridUnderTheirSharedName() {
+        func d(_ id: String, _ name: String) -> Deck { Deck(id: id, name: name, cards: []) }
+        let r = Seed.compact([d("1", "기초 Day 01"), d("2", "기초 Day 02"), d("3", "내 단어장"), d("4", "기초 Day 03")])
+        #expect(r.prefix == "기초 Day")
+        #expect(r.grid.map(\.deck.id) == ["1", "2", "4"])
+        #expect(r.grid.map(\.label) == ["01", "02", "03"])
+        #expect(r.rows.map(\.id) == ["3"])
+        #expect(Seed.compact([d("1", "01 시제와 완료"), d("2", "02 조동사와 가정법"), d("3", "03 관계사")]).grid.isEmpty)
+        #expect(Seed.compact([d("1", "Day 1"), d("2", "Day 2")]).grid.isEmpty)
+        #expect(Seed.compact([d("1", "단원 첫째이야기"), d("2", "단원 둘째이야기"), d("3", "단원 셋째이야기")]).grid.isEmpty)
+    }
+}

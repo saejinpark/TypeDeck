@@ -394,6 +394,41 @@ export function collapsedExcept(decks, deckId) {
   return [...new Set(decks.map((d) => (d.category ?? '').trim()))].filter((c) => c !== open);
 }
 
+/** Longest last word (in characters) that still counts as a short label, like "01". */
+export const GRID_LABEL_MAX = 4;
+
+/**
+ * Decks whose names differ only in a short last word ("기초 Day 01", "기초 Day 02", ...) are shown
+ * as a grid of those last words under the shared part. Needs at least three such decks with the
+ * same shared part. Returns the shared part, the grid decks with their labels, and the other
+ * decks (shown as rows), each in their original order.
+ */
+export function compactDecks(decks) {
+  const split = (name) => {
+    const words = (name ?? '').trim().split(/\s+/);
+    if (words.length < 2) return null;
+    const label = words[words.length - 1];
+    return chars(label).length <= GRID_LABEL_MAX ? { prefix: words.slice(0, -1).join(' '), label } : null;
+  };
+  const counts = new Map();
+  for (const d of decks) {
+    const s = split(d.name);
+    if (s) counts.set(s.prefix, (counts.get(s.prefix) ?? 0) + 1);
+  }
+  let prefix = '';
+  let best = 0;
+  for (const [p, n] of counts) if (n > best) { prefix = p; best = n; }
+  if (best < 3) return { prefix: '', grid: [], rows: decks };
+  const grid = [];
+  const rows = [];
+  for (const d of decks) {
+    const s = split(d.name);
+    if (s && s.prefix === prefix) grid.push({ deck: d, label: s.label });
+    else rows.push(d);
+  }
+  return { prefix, grid, rows };
+}
+
 /** Category names are trimmed and inner runs of spaces collapsed. */
 export const cleanCategory = (name) => (name ?? '').trim().replace(/\s+/g, ' ');
 
