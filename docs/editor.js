@@ -20,7 +20,69 @@ const isComplete = (r) => r.q.trim() && r.a.trim();
 const isIncomplete = (r) => !isBlank(r) && !isComplete(r);
 const composingKey = (e) => e.isComposing || e.keyCode === 229;
 
+/* ---------- key/value column divider ---------- */
+
+const RATIO_KEY = 'typedeck.editorKeyRatio';
+const DEFAULT_RATIO = 0.4;
+const clampRatio = (r) => Math.min(0.8, Math.max(0.15, r));
+let keyRatio = DEFAULT_RATIO;
+try { keyRatio = clampRatio(Number(localStorage.getItem(RATIO_KEY)) || DEFAULT_RATIO); } catch { /* storage blocked */ }
+
+/** Applies the ratio to both columns and puts the divider in the gap between them. */
+function applyRatio() {
+  const box = $('#editorRows');
+  box.style.setProperty('--key-fr', `${keyRatio}fr`);
+  box.style.setProperty('--value-fr', `${1 - keyRatio}fr`);
+  // Measured on a card row, not the header: the rows share their width with a scrollbar.
+  const [, keyCell] = columnCells();
+  const left = keyCell.getBoundingClientRect().right - box.getBoundingClientRect().left;
+  const gap = parseFloat(getComputedStyle(keyCell.parentElement).columnGap) || 0;
+  $('#colDivider').style.left = `${left + gap / 2}px`;
+}
+
+function columnCells() {
+  const row = $('#rowsBody .card-row') ?? $('#editorRows .card-rows-header');
+  return row.children;
+}
+
+function setRatio(r, persist = true) {
+  keyRatio = clampRatio(r);
+  applyRatio();
+  if (persist) try { localStorage.setItem(RATIO_KEY, String(keyRatio)); } catch { /* storage blocked */ }
+}
+
+function setupDivider() {
+  const handle = $('#colDivider');
+  const box = $('#editorRows');
+  handle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    try { handle.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
+    handle.classList.add('dragging');
+    const [, keyCell, valueCell] = columnCells();
+    const start = keyCell.getBoundingClientRect().left;
+    const width = keyCell.getBoundingClientRect().width + valueCell.getBoundingClientRect().width;
+    const move = (ev) => setRatio((ev.clientX - start) / width, false);
+    const up = () => {
+      handle.classList.remove('dragging');
+      handle.removeEventListener('pointermove', move);
+      setRatio(keyRatio);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up, { once: true });
+    handle.addEventListener('pointercancel', up, { once: true });
+  });
+  handle.addEventListener('dblclick', () => setRatio(DEFAULT_RATIO));
+  handle.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      setRatio(keyRatio + (e.key === 'ArrowLeft' ? -0.03 : 0.03));
+    }
+  });
+  new ResizeObserver(() => { if (!box.hidden) applyRatio(); }).observe(box);
+}
+
 export function setupEditor() {
+  setupDivider();
   const body = $('#rowsBody');
   body.addEventListener('input', onRowInput);
   body.addEventListener('keydown', onRowKeyDown);
@@ -87,6 +149,7 @@ export function openEditor(deck, handlers) {
   $('#editorCards').hidden = true;
   renderRows();
   $('#editor').showModal();
+  applyRatio();
   if (deck) focusCell(rows.length - 1, 'k');
   else $('#editorName').focus();
 }
@@ -256,6 +319,7 @@ function setView(next) {
   view = next;
   syncViewButtons();
   $('#editorRows').hidden = view !== 'rows';
+  if (view === 'rows') applyRatio();
   $('#editorCards').hidden = view !== 'text';
   note('');
   updateCount();

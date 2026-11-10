@@ -328,3 +328,15 @@ struct SidebarStateTests {
         #expect(model.collapsedCategories.isEmpty)
     }
 }
+
+struct ColumnLayoutTests {
+    @Test func columnsShareTheWidthAndStayUsable() {
+        let c = ColumnLayout(width: 640, keyRatio: 0.4)
+        #expect(c.key + c.value == c.available)
+        #expect(abs(c.key - c.available * 0.4) <= 1)
+        #expect(c.available == 546)
+        #expect(ColumnLayout(width: 640, keyRatio: 0).key == 82, "never narrower than 15%")
+        #expect(ColumnLayout(width: 640, keyRatio: 2).key == 437, "never wider than 80%")
+        #expect(c.dividerX > ColumnLayout.inset + ColumnLayout.number + c.key)
+    }
+}

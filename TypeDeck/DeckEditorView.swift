@@ -83,6 +83,10 @@ struct DeckEditorView: View {
     @State private var confirmDelete = false
     @State private var confirmDiscard = false
     @FocusState private var focus: Field?
+    /// Share of the row width given to the key column; the divider between the columns sets it.
+    @AppStorage("editorKeyRatio") private var keyRatio = ColumnLayout.defaultRatio
+    @State private var dragStartRatio: Double?
+    @State private var dividerHover = false
 
     private var deckID: String? {
         if case .deck(let id) = target { return id }
@@ -206,11 +210,11 @@ struct DeckEditorView: View {
 
     private var rowsList: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Text("").frame(width: 30)
-                Text("키").frame(maxWidth: .infinity, alignment: .leading)
-                (Text("값 ") + Text("여러 개면 쉼표로 구분").foregroundStyle(.tertiary)).frame(maxWidth: .infinity, alignment: .leading).layoutPriority(1)
-                Text("").frame(width: 26)
+            EditorColumns(keyRatio: keyRatio) {
+                Text("")
+                Text("키").lineLimit(1)
+                (Text("값 ") + Text("여러 개면 쉼표로 구분").foregroundStyle(.tertiary)).lineLimit(1)
+                Text("")
             }
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
@@ -238,17 +242,47 @@ struct DeckEditorView: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(Palette.card))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.line))
+        .overlay(alignment: .topLeading) {
+            // Reading the width here does not feed back into the list's own layout.
+            GeometryReader { geo in columnDivider(ColumnLayout(width: geo.size.width, keyRatio: keyRatio)) }
+        }
+    }
+
+    /// The draggable line between the key and value columns. Double-click resets it.
+    private func columnDivider(_ columns: ColumnLayout) -> some View {
+        let active = dividerHover || dragStartRatio != nil
+        return Rectangle()
+            .fill(active ? Palette.accent : Palette.line)
+            .frame(width: active ? 2 : 1)
+            .frame(width: 11)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .offset(x: columns.dividerX - 5.5)
+            .pointerStyle(.columnResize)
+            .onHover { dividerHover = $0 }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { g in
+                        let start = dragStartRatio ?? keyRatio
+                        dragStartRatio = start
+                        keyRatio = ColumnLayout.clamp(start + g.translation.width / max(columns.available, 1))
+                    }
+                    .onEnded { _ in dragStartRatio = nil }
+            )
+            .onTapGesture(count: 2) { keyRatio = ColumnLayout.defaultRatio }
+            .help("끌어서 키와 값 칸 너비 조절 · 두 번 클릭하면 처음대로")
+            .accessibilityLabel("키와 값 칸 너비 조절")
     }
 
     private func rowView(_ row: EditorRows.Row, index i: Int) -> some View {
         let isLast = i == rows.rows.count - 1
         let flagged = row.isIncomplete && focus != .key(row.id) && focus != .value(row.id)
-        return HStack(spacing: 6) {
+        return EditorColumns(keyRatio: keyRatio) {
             Text(isLast ? "+" : "\(i + 1)")
                 .font(.system(size: isLast ? 15 : 12, weight: .semibold))
                 .foregroundStyle(isLast ? Palette.accent : Palette.muted)
                 .monospacedDigit()
-                .frame(width: 30, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             cell(row, field: .key(row.id),
                  prompt: isLast ? (i == 0 ? "키 (예: 대한민국)" : "새 카드 키") : "키",
                  text: Binding(get: { row.q }, set: { update(row.id, q: $0) }),
@@ -258,7 +292,6 @@ struct DeckEditorView: View {
                  prompt: isLast ? (i == 0 ? "값 (여러 개면 쉼표로: 지원하다, 신청하다)" : "값 (쉼표로 여러 개)") : "값",
                  text: Binding(get: { row.a }, set: { update(row.id, a: $0) }),
                  flagged: flagged && row.a.trimmingCharacters(in: .whitespaces).isEmpty)
-                .layoutPriority(1)
                 .onSubmit { moveDown(from: row.id, column: .value(row.id), viaReturn: true) }
             Button {
                 remove(row.id)
@@ -267,7 +300,7 @@ struct DeckEditorView: View {
             }
             .buttonStyle(.borderless)
             .foregroundStyle(Palette.muted)
-            .frame(width: 26)
+            .frame(maxWidth: .infinity)
             .opacity(isLast ? 0 : 1)
             .disabled(isLast)
             .help("카드 삭제")
@@ -465,5 +498,57 @@ struct DeckEditorView: View {
 
     private func requestClose() {
         if dirty { confirmDiscard = true } else { dismiss() }
+    }
+}
+
+/// Widths of the editor's key and value columns. Both always get at least a usable width, so a
+/// long placeholder can no longer squeeze the key column away.
+struct ColumnLayout {
+    static let number: CGFloat = 30
+    static let remove: CGFloat = 26
+    static let spacing: CGFloat = 6
+    static let inset: CGFloat = 10
+    static let defaultRatio = 0.4
+    static let minRatio = 0.15
+    static let maxRatio = 0.8
+
+    let width: CGFloat
+    let keyRatio: Double
+
+    static func clamp(_ ratio: Double) -> Double { min(max(ratio, minRatio), maxRatio) }
+
+    /// Width shared by the key and value columns.
+    var available: CGFloat { max(0, width - 2 * Self.inset - Self.number - Self.remove - 3 * Self.spacing) }
+    var key: CGFloat { (available * Self.clamp(keyRatio)).rounded() }
+    var value: CGFloat { available - key }
+    /// Middle of the gap between the two columns, from the list's leading edge.
+    var dividerX: CGFloat { Self.inset + Self.number + Self.spacing + key + Self.spacing / 2 }
+}
+
+/// Lays out an editor row (number, key, value, remove) using whatever width it is offered,
+/// split by `keyRatio`. It never asks its content how wide to be, so a long placeholder
+/// cannot squeeze the key column, and the width does not depend on the content.
+struct EditorColumns: Layout {
+    var keyRatio: Double
+
+    private func frames(width: CGFloat) -> [CGFloat] {
+        let c = ColumnLayout(width: width + 2 * ColumnLayout.inset, keyRatio: keyRatio)
+        return [ColumnLayout.number, c.key, c.value, ColumnLayout.remove]
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 560
+        let widths = frames(width: width)
+        let height = zip(subviews, widths).map { $0.sizeThatFits(ProposedViewSize(width: $1, height: nil)).height }.max() ?? 0
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        for (view, w) in zip(subviews, frames(width: bounds.width)) {
+            view.place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading,
+                       proposal: ProposedViewSize(width: w, height: bounds.height))
+            x += w + ColumnLayout.spacing
+        }
     }
 }
