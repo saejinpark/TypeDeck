@@ -281,3 +281,14 @@ test('a sentence answer keeps its commas', () => {
   assert.equal(s.hadError, false);
   assert.equal(s.input('If I had known, I would have come.', false, 1), 'advance');
 });
+
+test('bundled sample decks: unique keys per category group and idioms added in v6', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { decks } = JSON.parse(await readFile(new URL('../docs/decks.json', import.meta.url), 'utf8'));
+  const toeic = decks.filter((d) => d.id.startsWith('toeic-')).flatMap((d) => d.cards.map((c) => c[0].toLowerCase()));
+  assert.equal(new Set(toeic).size, toeic.length, 'no TOEIC entry appears twice');
+  const phrases = decks.filter((d) => d.category === '토익 숙어');
+  assert.equal(phrases.length, 19);
+  assert.ok(phrases.filter((d) => d.since === 6).every((d) => Number(d.id.slice(-2)) >= 5), 'old idiom decks keep since 3');
+  assert.ok(decks.every((d) => Number.isInteger(d.since)));
+});

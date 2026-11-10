@@ -255,7 +255,7 @@ struct SidebarStateTests {
         #expect(model.showWelcome)
         #expect(model.decks.isEmpty)
         let n = model.finishWelcome(sampleCategories: ["토익 기초 (600+)", "토익 숙어"])
-        #expect(n == 32)
+        #expect(n == 47) // 28 basic + 19 idiom decks
         #expect(!model.showWelcome)
         #expect(model.selectedDeckID == "toeic-basic-01")
         #expect(model.collapsedCategories == ["토익 숙어"])

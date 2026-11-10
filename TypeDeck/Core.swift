@@ -70,7 +70,7 @@ struct DeckFile: Codable {
 }
 
 enum Seed {
-    static let version = 5
+    static let version = 6
 
     /// Adds built-in decks that are newer than the stored data. A built-in deck's `since` is the
     /// seed version that brought it, so a deck the user deleted never comes back on an update.

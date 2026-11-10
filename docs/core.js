@@ -351,7 +351,7 @@ export class InputTracker {
 
 /* ---------- decks ---------- */
 
-export const SEED_VERSION = 5;
+export const SEED_VERSION = 6;
 /**
  * Adds built-in decks that are newer than the stored data. A built-in deck's `since` is the seed
  * version that brought it, so a deck the user deleted never comes back on an update.
