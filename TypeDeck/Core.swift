@@ -50,6 +50,8 @@ struct Deck: Identifiable, Hashable, Codable {
 struct DeckFile: Codable {
     var version = 1
     var decks: [Deck]
+    /// The user's categories in sidebar order, including empty ones. Missing in older files.
+    var categories: [String]?
 }
 
 enum Seed {
@@ -103,21 +105,51 @@ enum Seed {
 
     /// Every category except the one holding `deckID`: the sidebar starts with only that one open.
     static func collapsed(except deckID: String?, in decks: [Deck]) -> Set<String> {
-        let open = decks.first { $0.id == deckID }?.category.trimmingCharacters(in: .whitespaces) ?? ""
-        return Set(decks.map { $0.category.trimmingCharacters(in: .whitespaces) }).subtracting([open])
+        let open = decks.first { $0.id == deckID }?.category.cleanedCategory ?? ""
+        return Set(decks.map { $0.category.cleanedCategory }).subtracting([open])
     }
 
     /// Groups decks by category in order of first appearance; uncategorized decks go last.
-    static func group(_ decks: [Deck]) -> [(category: String, decks: [Deck])] {
+    /// Category names are trimmed and inner runs of spaces collapsed.
+    static func clean(_ name: String) -> String {
+        name.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    /// Groups decks by category. `order` is the user's category list, which may hold empty
+    /// categories; categories only found on decks follow it, and uncategorized decks go last.
+    static func group(_ decks: [Deck], order list: [String] = []) -> [(category: String, decks: [Deck])] {
         var order: [String] = []
         var groups: [String: [Deck]] = [:]
+        for name in list.map(clean) where !name.isEmpty && groups[name] == nil {
+            order.append(name)
+            groups[name] = []
+        }
         for deck in decks {
-            let name = deck.category.trimmingCharacters(in: .whitespaces)
+            let name = clean(deck.category)
             if groups[name] == nil { order.append(name) }
             groups[name, default: []].append(deck)
         }
         let named = order.filter { !$0.isEmpty }.map { ($0, groups[$0]!) }
         return named + (groups[""].map { [("", $0)] } ?? [])
+    }
+
+    /// The category list with every category used by a deck, keeping the existing order.
+    static func sync(_ order: [String], with decks: [Deck]) -> [String] {
+        group(decks, order: order).map(\.category).filter { !$0.isEmpty }
+    }
+
+    /// Renames a category on every deck and in the list. Renaming onto an existing category
+    /// merges the two, keeping the target's place.
+    static func rename(_ from: String, to: String, decks: [Deck], order: [String]) -> (decks: [Deck], order: [String]) {
+        let target = clean(to)
+        let nextDecks = decks.map { d -> Deck in
+            var d = d
+            if clean(d.category) == from { d.category = target }
+            return d
+        }
+        let list = sync(order, with: decks)
+        let nextOrder = list.contains(target) ? list.filter { $0 != from } : list.map { $0 == from ? target : $0 }
+        return (nextDecks, sync(nextOrder, with: nextDecks))
     }
 }
 
@@ -142,6 +174,50 @@ enum Core {
     }
 
     /// Like parseCards, but also counts the non-empty lines that had no usable separator.
+    /// Reads cards from an imported file. CSV and TSV take the first column as the key and the
+    /// rest as meanings (a comma inside quotes stays in the value); anything else uses the same
+    /// separators as pasting.
+    static func parseImport(_ text: String, fileName: String) -> (cards: [Card], skipped: Int) {
+        let ext = (fileName as NSString).pathExtension.lowercased()
+        guard ext == "csv" || ext == "tsv" else { return parseCardsDetailed(text) }
+        let sep: Character = ext == "tsv" ? "\t" : ","
+        var cards: [Card] = []
+        var skipped = 0
+        let body = text.hasPrefix("\u{FEFF}") ? String(text.dropFirst()) : text
+        for raw in body.components(separatedBy: .newlines) where !raw.trimmingCharacters(in: .whitespaces).isEmpty {
+            let fields = csvFields(raw, separator: sep)
+            let key = fields.first ?? ""
+            let value = fields.dropFirst().filter { !$0.isEmpty }.joined(separator: ", ")
+            if !key.isEmpty && !value.isEmpty { cards.append(Card(key, value)) } else { skipped += 1 }
+        }
+        return (cards, skipped)
+    }
+
+    /// Splits one CSV line; quotes may wrap fields and "" is a literal quote.
+    private static func csvFields(_ line: String, separator: Character) -> [String] {
+        var out: [String] = []
+        var cur = ""
+        var quoted = false
+        var chars = Array(line)[...]
+        while let ch = chars.popFirst() {
+            if quoted {
+                if ch == "\"" && chars.first == "\"" { cur.append("\""); chars.removeFirst() }
+                else if ch == "\"" { quoted = false }
+                else { cur.append(ch) }
+            } else if ch == "\"" && cur.trimmingCharacters(in: .whitespaces).isEmpty {
+                quoted = true
+                cur = ""
+            } else if ch == separator {
+                out.append(cur)
+                cur = ""
+            } else {
+                cur.append(ch)
+            }
+        }
+        out.append(cur)
+        return out.map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
     static func parseCardsDetailed(_ text: String) -> (cards: [Card], skipped: Int) {
         var cards: [Card] = []
         var skipped = 0
@@ -451,4 +527,9 @@ struct AnyRandom: RandomNumberGenerator {
     private var base: any RandomNumberGenerator
     init(_ base: any RandomNumberGenerator) { self.base = base }
     mutating func next() -> UInt64 { base.next() }
+}
+
+extension String {
+    /// This string as a category name (see `Seed.clean`).
+    var cleanedCategory: String { Seed.clean(self) }
 }

@@ -1,4 +1,4 @@
-import { Session, InputTracker, diff, chars, migrateDecks, groupDecks, collapsedExcept, seedCategories, addSeedDecks, SEED_VERSION, UNCATEGORIZED } from './core.js';
+import { Session, InputTracker, diff, chars, migrateDecks, groupDecks, collapsedExcept, seedCategories, addSeedDecks, syncCategories, renameCategory, cleanCategory, SEED_VERSION, UNCATEGORIZED } from './core.js';
 import { setupEditor, openEditor as openDeckEditor, closeEditor } from './editor.js';
 
 const STORE_KEY = 'typedeck.v1';
@@ -11,7 +11,7 @@ const el = (tag, cls, text) => {
 };
 
 let seed = [];
-let store = { decks: [], seedVersion: SEED_VERSION, settings: { deckId: null, mode: 'copy', reverse: false, shuffle: true, collapsed: [] } };
+let store = { decks: [], categories: [], seedVersion: SEED_VERSION, settings: { deckId: null, mode: 'copy', reverse: false, shuffle: true, collapsed: [] } };
 const CHOICES = 5;
 const isChoice = () => store.settings.mode === 'choice';
 let session = null;
@@ -340,13 +340,26 @@ function summaryCard() {
 
 function emptyCard() {
   const card = el('article', 'card front empty');
-  card.append(el('p', '', store.decks.length ? '이 덱에는 카드가 없어요.' : '덱이 없어요.'));
-  const btn = el('button', 'primary-btn', store.decks.length ? '카드 추가하기' : '새 덱 만들기');
-  btn.type = 'button';
-  btn.addEventListener('click', () => openEditor(store.decks.length ? store.settings.deckId : null));
-  card.append(btn);
-  if (!store.decks.length && seed.length) {
-    const add = el('button', 'ghost-btn', '토익 단어 덱 넣기');
+  if (store.decks.length) {
+    card.append(el('p', '', '이 덱에는 카드가 없어요.'));
+    const btn = el('button', 'primary-btn', '카드 추가하기');
+    btn.type = 'button';
+    btn.addEventListener('click', () => openEditor(store.settings.deckId));
+    card.append(btn);
+    return card;
+  }
+  card.append(el('p', '', '아직 덱이 없어요. 공부할 주제마다 카테고리를 만들고, 외울 것을 덱으로 정리해 보세요.'));
+  const buttons = el('div', 'empty-actions');
+  const cat = el('button', 'primary-btn', '＋ 새 카테고리');
+  cat.type = 'button';
+  cat.addEventListener('click', startNewCategory);
+  const deck = el('button', 'ghost-btn', '＋ 새 덱');
+  deck.type = 'button';
+  deck.addEventListener('click', () => openEditor(null));
+  buttons.append(cat, deck);
+  card.append(buttons);
+  if (seed.length) {
+    const add = el('button', 'link-btn', '토익 단어장 넣기');
     add.type = 'button';
     add.addEventListener('click', () => openPicker(false));
     card.append(add);
@@ -382,21 +395,39 @@ function renderDeckList() {
   const list = $('#deckList');
   list.replaceChildren();
   const collapsed = new Set(store.settings.collapsed ?? []);
-  const groups = groupDecks(store.decks);
+  const groups = groupDecks(store.decks, store.categories);
   for (const group of groups) {
     const key = group.category;
+    const label = key || UNCATEGORIZED;
     const isOpen = !collapsed.has(key);
     const section = el('div', 'deck-group');
+    if (catEdit?.mode === 'rename' && catEdit.key === key) {
+      section.append(categoryInput(key));
+      list.append(section);
+      continue;
+    }
     const head = el('button', 'group-head keep-focus');
     head.type = 'button';
     head.setAttribute('aria-expanded', String(isOpen));
     head.title = isOpen ? '접기' : '펼치기';
     head.classList.toggle('has-current', group.decks.some((d) => d.id === store.settings.deckId));
-    head.append(el('span', 'chev', '›'), el('span', 'group-name', key || UNCATEGORIZED), el('span', 'count', `${group.decks.length}개`));
+    head.append(el('span', 'chev', '›'), el('span', 'group-name', label), el('span', 'count', `${group.decks.length}개`));
     head.addEventListener('click', () => toggleGroup(key));
+    head.addEventListener('dblclick', () => startRename(key));
     const headRow = el('div', 'group-row');
-    headRow.append(head, rowAction(`'${key || UNCATEGORIZED}' 카테고리 삭제`, () => deleteCategory(key)));
+    headRow.append(head, rowActions([
+      [PLUS, `'${label}'에 새 덱 만들기`, () => openEditor(null, key)],
+      [PENCIL, `'${label}' 이름 바꾸기`, () => startRename(key)],
+      [TRASH, `'${label}' 카테고리 삭제`, () => deleteCategory(key)],
+    ]));
     section.append(headRow);
+    if (isOpen && !group.decks.length) {
+      const empty = el('button', 'group-empty keep-focus');
+      empty.type = 'button';
+      empty.append(el('span', '', '덱이 없어요'), el('b', '', '＋ 덱 만들기'));
+      empty.addEventListener('click', () => openEditor(null, key));
+      section.append(empty);
+    }
     if (isOpen) {
       for (const deck of group.decks) {
         const b = el('button', 'deck-item keep-focus');
@@ -405,12 +436,13 @@ function renderDeckList() {
         b.append(el('span', '', deck.name), el('span', 'count', String(deck.cards.length)));
         b.addEventListener('click', () => selectDeck(deck.id));
         const row = el('div', 'deck-row');
-        row.append(b, rowAction(`'${deck.name}' 덱 삭제`, () => deleteDeck(deck.id)));
+        row.append(b, rowActions([[TRASH, `'${deck.name}' 덱 삭제`, () => deleteDeck(deck.id)]]));
         section.append(row);
       }
     }
     list.append(section);
   }
+  if (catEdit?.mode === 'new') list.append(categoryInput(''));
   const allClosed = groups.every((g) => collapsed.has(g.category));
   const toggle = $('#toggleGroups');
   toggle.textContent = allClosed ? '모두 펼치기' : '모두 접기';
@@ -423,25 +455,105 @@ function renderDeckList() {
 
 const TRASH = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2.5 4h11M6 4V2.75h4V4M4 4l.7 9.25h6.6L12 4M6.75 6.75v4M9.25 6.75v4"/></svg>';
 
-/** The small trash button that shows when a sidebar row is hovered. */
-function rowAction(label, onClick) {
-  const b = el('button', 'row-action keep-focus');
-  b.type = 'button';
-  b.title = label;
-  b.setAttribute('aria-label', label);
-  b.innerHTML = TRASH;
-  b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
-  return b;
+const PLUS = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" d="M8 3v10M3 8h10"/></svg>';
+const PENCIL = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M10.5 2.5l3 3L6 13H3v-3z"/></svg>';
+
+/** Small buttons that show at the end of a sidebar row while it is hovered. */
+function rowActions(actions) {
+  const box = el('div', 'row-actions');
+  for (const [icon, label, onClick] of actions) {
+    const b = el('button', 'row-action keep-focus');
+    b.type = 'button';
+    b.title = label;
+    b.setAttribute('aria-label', label);
+    b.innerHTML = icon;
+    b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+    box.append(b);
+  }
+  return box;
 }
 
 const isBuiltIn = (deck) => seed.some((s) => s.id === deck.id);
-const comeBackNote = '기본 덱이라 사이드바 아래 \'기본 덱 추가\'에서 다시 넣을 수 있어요.';
+const comeBackNote = '토익 단어장 덱이라 사이드바 아래 \'토익 단어장 추가\'에서 다시 넣을 수 있어요.';
+
+/* ---------- creating and renaming categories ---------- */
+
+let catEdit = null; // { mode: 'new' } or { mode: 'rename', key }
+
+function startNewCategory() {
+  catEdit = { mode: 'new' };
+  renderDeckList();
+}
+
+function startRename(key) {
+  catEdit = { mode: 'rename', key };
+  renderDeckList();
+}
+
+/** The inline name field used to create or rename a category. */
+function categoryInput(key) {
+  const row = el('div', 'cat-input-row');
+  const input = el('input', 'cat-input');
+  input.maxLength = 40;
+  input.autocomplete = 'off';
+  input.placeholder = '카테고리 이름 (예: 정보처리기사)';
+  input.value = key;
+  input.setAttribute('aria-label', key ? `'${key || UNCATEGORIZED}' 새 이름` : '새 카테고리 이름');
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    if (commit && !commitCategory(input.value)) { input.focus(); return; }
+    done = true;
+    catEdit = null;
+    renderDeckList();
+    focusSink();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  // Clicking elsewhere keeps a typed name; a confirm() that hands focus back does not.
+  input.addEventListener('blur', () => setTimeout(() => {
+    if (document.activeElement !== input) finish(Boolean(cleanCategory(input.value)));
+  }, 0));
+  row.append(input);
+  requestAnimationFrame(() => { input.focus(); input.select(); input.scrollIntoView({ block: 'nearest' }); });
+  return row;
+}
+
+/** Applies the name typed into the category field. Returns false to keep editing. */
+function commitCategory(value) {
+  const name = cleanCategory(value);
+  const existing = syncCategories(store.categories, store.decks);
+  if (!name) return true;
+  if (name === UNCATEGORIZED) { note(`'${UNCATEGORIZED}'는 쓸 수 없는 이름이에요`); return false; }
+  if (catEdit?.mode === 'new') {
+    if (existing.includes(name)) { note('이미 있는 카테고리예요'); return false; }
+    store.categories = [...existing, name];
+    store.settings.collapsed = (store.settings.collapsed ?? []).filter((c) => c !== name);
+    save();
+    note(`'${name}' 카테고리를 만들었어요`);
+    return true;
+  }
+  const from = catEdit.key;
+  if (name === from) return true;
+  if (existing.includes(name) && !confirm(`'${name}' 카테고리가 이미 있어요. 두 카테고리를 합칠까요?`)) return false;
+  const r = renameCategory(store.decks, store.categories, from, name);
+  store.decks = r.decks;
+  store.categories = r.order;
+  store.settings.collapsed = (store.settings.collapsed ?? []).map((c) => (c === from ? name : c));
+  save();
+  return true;
+}
 
 /** Removes decks and keeps the selection and the collapsed list consistent. */
-function removeDecks(ids) {
+function removeDecks(ids, dropCategory = null) {
   store.decks = store.decks.filter((d) => !ids.has(d.id));
+  if (dropCategory !== null) store.categories = (store.categories ?? []).filter((c) => c !== dropCategory);
+  store.categories = syncCategories(store.categories, store.decks);
   if (!currentDeck()) store.settings.deckId = store.decks[0]?.id ?? null;
-  const cats = new Set(store.decks.map((d) => (d.category ?? '').trim()));
+  const cats = new Set(store.categories);
   store.settings.collapsed = (store.settings.collapsed ?? []).filter((c) => cats.has(c));
   revealDeck(store.settings.deckId);
   save();
@@ -451,16 +563,21 @@ function removeDecks(ids) {
 }
 
 function deleteCategory(key) {
-  const list = store.decks.filter((d) => (d.category ?? '').trim() === key);
-  if (!list.length) return;
+  const list = store.decks.filter((d) => cleanCategory(d.category) === key);
+  const label = key || UNCATEGORIZED;
+  if (!list.length) {
+    if (!confirm(`빈 카테고리 '${label}'를 삭제할까요?`)) return;
+    removeDecks(new Set(), key);
+    return;
+  }
   const tail = list.every(isBuiltIn) ? comeBackNote : '되돌릴 수 없어요.';
-  if (!confirm(`'${key || UNCATEGORIZED}' 카테고리의 덱 ${list.length}개를 모두 삭제할까요?\n${tail}`)) return;
-  removeDecks(new Set(list.map((d) => d.id)));
+  if (!confirm(`'${label}' 카테고리와 그 안의 덱 ${list.length}개를 모두 삭제할까요?\n${tail}`)) return;
+  removeDecks(new Set(list.map((d) => d.id)), key);
   note(`덱 ${list.length}개를 삭제했어요`);
 }
 
 function toggleAllGroups() {
-  const keys = groupDecks(store.decks).map((g) => g.category);
+  const keys = groupDecks(store.decks, store.categories).map((g) => g.category);
   const collapsed = new Set(store.settings.collapsed ?? []);
   store.settings.collapsed = keys.every((k) => collapsed.has(k)) ? [] : keys;
   save();
@@ -511,10 +628,11 @@ function note(text) {
 
 /* ---------- editor ---------- */
 
-function openEditor(id) {
+/** Opens the editor for deck `id`, or for a new deck in `category` (default: the current one). */
+function openEditor(id, category) {
   const deck = id ? store.decks.find((d) => d.id === id) : null;
-  const categories = groupDecks(store.decks).map((g) => g.category).filter(Boolean);
-  const defaultCategory = deck ? deck.category ?? '' : currentDeck()?.category ?? '';
+  const categories = syncCategories(store.categories, store.decks);
+  const defaultCategory = deck ? deck.category ?? '' : category ?? currentDeck()?.category ?? '';
   openDeckEditor(deck, {
     categories,
     defaultCategory,
@@ -534,6 +652,7 @@ function saveDeck(id, name, category, cards) {
     store.decks.push({ id: newId, name: name || '새 덱', category, cards });
     store.settings.deckId = newId;
   }
+  store.categories = syncCategories(store.categories, store.decks);
   // A deck that was just saved (possibly into another category) stays in view.
   revealDeck(id ?? store.settings.deckId);
   save();
@@ -549,15 +668,15 @@ function deleteDeck(id) {
   removeDecks(new Set([id]));
 }
 
-/* ---------- built-in deck picker (first run and "기본 덱 추가") ---------- */
+/* ---------- built-in deck picker (first run and "토익 단어장 추가") ---------- */
 
 function openPicker(firstRun) {
   const dlg = $('#picker');
   const cats = seedCategories(seed, store.decks);
-  $('#pickerTitle').textContent = firstRun ? 'TypeDeck에 오신 걸 환영해요' : '기본 덱 추가';
+  $('#pickerTitle').textContent = firstRun ? 'TypeDeck에 오신 걸 환영해요' : '토익 단어장 추가';
   $('#pickerLead').textContent = firstRun
-    ? '카드에 나온 단어의 뜻을 치면 바로 다음 카드로 넘어가요. 토익 영단어 덱을 넣어 드릴까요? 나중에 사이드바 아래 \'기본 덱 추가\'에서 언제든 넣을 수 있어요.'
-    : '넣을 토익 덱을 고르세요. 이미 있는 덱은 그대로 두고 빠진 덱만 넣어요.';
+    ? '외울 것을 카드로 만들어 손으로 치면서 익혀요. 키를 보고 값을 치면 바로 다음 카드로 넘어가요. 자격증, 외국어, 용어처럼 공부할 주제마다 카테고리를 만들고 덱으로 정리하세요. 예시로 토익 영단어장을 넣어 둘까요? 필요 없으면 빈 상태로 시작해도 되고, 나중에 사이드바 아래 \'토익 단어장 추가\'에서 넣을 수 있어요.'
+    : '넣을 토익 단어장을 고르세요. 이미 있는 덱은 그대로 두고 빠진 덱만 넣어요.';
   const list = $('#pickerList');
   list.replaceChildren();
   for (const c of cats) {
@@ -599,6 +718,7 @@ function openPicker(firstRun) {
 
 function applyPicked(add, firstRun) {
   store.decks = addSeedDecks(store.decks, seed, add);
+  store.categories = syncCategories(store.categories, store.decks);
   if (firstRun) {
     store.seedVersion = SEED_VERSION;
     store.settings.deckId = store.decks[0]?.id ?? null;
@@ -656,6 +776,7 @@ function bindUI() {
     save(); renderControls(); startSession();
   });
   $('#newDeck').addEventListener('click', () => openEditor(null));
+  $('#newCategory').addEventListener('click', startNewCategory);
   $('#toggleGroups').addEventListener('click', toggleAllGroups);
   $('#editDeck').addEventListener('click', () => openEditor(store.settings.deckId));
   $('#restoreDecks').addEventListener('click', () => openPicker(false));
@@ -677,6 +798,7 @@ async function boot() {
   if (!firstRun) {
     store = {
       decks: migrateDecks(saved.decks, saved.seedVersion, seed),
+      categories: saved.categories ?? [],
       seedVersion: SEED_VERSION,
       settings: { ...store.settings, ...saved.settings },
     };
@@ -684,6 +806,7 @@ async function boot() {
     // First run: nothing is stored until the welcome dialog is answered.
     store.decks = [];
   }
+  store.categories = syncCategories(store.categories, store.decks);
   if (!currentDeck()) store.settings.deckId = store.decks[0]?.id ?? null;
   if (startCollapsed) store.settings.collapsed = collapsedExcept(store.decks, store.settings.deckId);
   revealDeck(store.settings.deckId);

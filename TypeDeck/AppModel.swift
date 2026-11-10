@@ -22,19 +22,34 @@ struct DeckDraft: Hashable {
     var note: String
 }
 
-/// The built-in deck picker: the welcome on first launch, or "기본 덱 추가" later.
+/// The built-in deck picker: the welcome on first launch, or "토익 단어장 추가" later.
 enum DeckPickerMode: String, Identifiable {
     case welcome, add
     var id: String { rawValue }
 }
 
+/// The name field shown to create or rename a category.
+enum CategoryPrompt: Identifiable, Equatable {
+    case new
+    case rename(String)
+    var id: String {
+        switch self {
+        case .new: return "new"
+        case .rename(let c): return "rename:" + c
+        }
+    }
+}
+
 enum EditorTarget: Identifiable, Hashable {
     case new
+    /// A new deck that starts in this category.
+    case newIn(String)
     case deck(String)
     case draft(DeckDraft)
     var id: String {
         switch self {
         case .new: return "new"
+        case .newIn(let c): return "new:" + c
         case .deck(let id): return id
         case .draft(let d): return d.id.uuidString
         }
@@ -44,6 +59,8 @@ enum EditorTarget: Identifiable, Hashable {
 @Observable
 final class AppModel {
     private(set) var decks: [Deck] = []
+    /// The user's categories in sidebar order, including empty ones.
+    private(set) var categoryOrder: [String] = []
     private(set) var session: Session?
     private(set) var selectedDeckID: String?
 
@@ -73,7 +90,10 @@ final class AppModel {
         var progress: Double
     }
     var showPDFImporter = false
+    /// Category that a deck made from a file goes into; nil means the current deck's.
+    var importCategory: String?
     var deckPicker: DeckPickerMode?
+    var categoryPrompt: CategoryPrompt?
     private(set) var importStatus: ImportStatus?
     var importError: String?
     @ObservationIgnored private var importTask: Task<Void, Never>?
@@ -98,15 +118,16 @@ final class AppModel {
     init(storeURL: URL? = AppModel.defaultStoreURL, defaults: UserDefaults = .standard, bundle: Bundle = .main) {
         self.storeURL = storeURL
         self.defaults = defaults
-        seed = Self.loadDecks(from: bundle.url(forResource: "decks", withExtension: "json")) ?? []
+        seed = Self.loadFile(from: bundle.url(forResource: "decks", withExtension: "json"))?.decks ?? []
         mode = PracticeMode(rawValue: defaults.string(forKey: Keys.mode) ?? "") ?? .copy
         reverse = defaults.bool(forKey: Keys.reverse)
         shuffle = defaults.object(forKey: Keys.shuffle) as? Bool ?? true
         collapsedCategories = Set(defaults.stringArray(forKey: Keys.collapsed) ?? [])
         let storedVersion = defaults.integer(forKey: Keys.seedVersion)
-        let stored = Self.loadDecks(from: storeURL)
+        let stored = Self.loadFile(from: storeURL)
         if let stored {
-            decks = Seed.migrate(stored, from: storedVersion, seed: seed)
+            decks = Seed.migrate(stored.decks, from: storedVersion, seed: seed)
+            categoryOrder = Seed.sync(stored.categories ?? [], with: decks)
             defaults.set(Seed.version, forKey: Keys.seedVersion)
         } else {
             // First launch: nothing is stored until the welcome sheet is answered.
@@ -122,16 +143,18 @@ final class AppModel {
         startSession()
     }
 
-    var categories: [String] { Seed.group(decks).map(\.category).filter { !$0.isEmpty } }
+    var categories: [String] { Seed.sync(categoryOrder, with: decks) }
+    /// Sidebar groups, including empty categories.
+    var groups: [(category: String, decks: [Deck])] { Seed.group(decks, order: categoryOrder) }
 
     static var defaultStoreURL: URL? {
         guard let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         return dir.appendingPathComponent("TypeDeck", isDirectory: true).appendingPathComponent("decks.json")
     }
 
-    private static func loadDecks(from url: URL?) -> [Deck]? {
+    private static func loadFile(from url: URL?) -> DeckFile? {
         guard let url, let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(DeckFile.self, from: data).decks
+        return try? JSONDecoder().decode(DeckFile.self, from: data)
     }
 
     private func save() {
@@ -140,7 +163,8 @@ final class AppModel {
             try FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
-            try encoder.encode(DeckFile(decks: decks)).write(to: storeURL, options: .atomic)
+            categoryOrder = Seed.sync(categoryOrder, with: decks)
+            try encoder.encode(DeckFile(decks: decks, categories: categoryOrder)).write(to: storeURL, options: .atomic)
         } catch {
             NSLog("TypeDeck: could not save decks: \(error)")
         }
@@ -155,7 +179,46 @@ final class AppModel {
     // MARK: Sidebar categories
 
     var allCategoriesCollapsed: Bool {
-        Seed.group(decks).allSatisfy { collapsedCategories.contains($0.category) }
+        groups.allSatisfy { collapsedCategories.contains($0.category) }
+    }
+
+    /// Creates an empty category. Returns a message when the name cannot be used.
+    @discardableResult
+    func createCategory(_ name: String) -> String? {
+        let name = Seed.clean(name)
+        if let problem = check(name, except: nil) { return problem }
+        categoryOrder = categories + [name]
+        collapsedCategories.remove(name)
+        save()
+        return nil
+    }
+
+    /// Renames a category; onto an existing name the two are merged.
+    @discardableResult
+    func renameCategory(_ from: String, to: String) -> String? {
+        let name = Seed.clean(to)
+        guard name != from else { return nil }
+        if name.isEmpty { return "이름을 입력해 주세요." }
+        if name == Seed.uncategorized { return "'\(Seed.uncategorized)'는 쓸 수 없는 이름이에요." }
+        let r = Seed.rename(from, to: name, decks: decks, order: categoryOrder)
+        decks = r.decks
+        categoryOrder = r.order
+        if collapsedCategories.remove(from) != nil { collapsedCategories.insert(name) }
+        save()
+        return nil
+    }
+
+    private func check(_ name: String, except: String?) -> String? {
+        if name.isEmpty { return "이름을 입력해 주세요." }
+        if name == Seed.uncategorized { return "'\(Seed.uncategorized)'는 쓸 수 없는 이름이에요." }
+        if name != except && categories.contains(name) { return "'\(name)' 카테고리가 이미 있어요." }
+        return nil
+    }
+
+    /// Opens the file picker for a deck made from a PDF or a text/CSV file.
+    func startImport(into category: String?) {
+        importCategory = category
+        showPDFImporter = true
     }
 
     func toggleCategory(_ category: String) {
@@ -167,13 +230,13 @@ final class AppModel {
     }
 
     func setAllCategories(open: Bool) {
-        collapsedCategories = open ? [] : Set(Seed.group(decks).map(\.category))
+        collapsedCategories = open ? [] : Set(groups.map(\.category))
     }
 
     /// Opens the category holding `id` so the selected deck is visible.
     func reveal(_ id: String?) {
         guard let deck = decks.first(where: { $0.id == id }) else { return }
-        let category = deck.category.trimmingCharacters(in: .whitespaces)
+        let category = deck.category.cleanedCategory
         if collapsedCategories.contains(category) { collapsedCategories.remove(category) }
     }
 
@@ -216,11 +279,11 @@ final class AppModel {
 
     func isBuiltIn(_ deck: Deck) -> Bool { seed.contains { $0.id == deck.id } }
 
-    /// Deletes every deck in `category` ("" is the uncategorized group).
+    /// Deletes a category and every deck in it ("" is the uncategorized group).
     func deleteCategory(_ category: String) {
-        let ids = Set(decks.filter { $0.category.trimmingCharacters(in: .whitespaces) == category }.map(\.id))
-        guard !ids.isEmpty else { return }
+        let ids = Set(decks.filter { $0.category.cleanedCategory == category }.map(\.id))
         decks.removeAll { ids.contains($0.id) }
+        categoryOrder.removeAll { $0 == category }
         collapsedCategories.remove(category)
         save()
         if let id = selectedDeckID, ids.contains(id) {
@@ -242,7 +305,7 @@ final class AppModel {
             select(decks.first?.id)
             collapsedCategories = Seed.collapsed(except: selectedDeckID, in: decks)
         } else {
-            for c in Set(add.map { $0.category.trimmingCharacters(in: .whitespaces) }) { collapsedCategories.remove(c) }
+            for c in Set(add.map { $0.category.cleanedCategory }) { collapsedCategories.remove(c) }
             if selectedDeck == nil { select(add.first?.id ?? decks.first?.id) }
         }
         deckPicker = nil
@@ -320,9 +383,35 @@ final class AppModel {
     // MARK: PDF -> deck
 
     /// Reads a PDF, asks Apple Intelligence for cards and opens them in the editor as a draft.
+    /// The category a deck made from a file goes into.
+    private var draftCategory: String { importCategory ?? selectedDeck?.category ?? "" }
+
+    /// Makes a draft deck from a picked file: PDFs go through Apple Intelligence, text, CSV and
+    /// TSV files are read line by line. The draft opens in the editor.
+    func importFile(at url: URL) {
+        if url.pathExtension.lowercased() == "pdf" { importPDF(at: url); return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        var encoding = String.Encoding.utf8
+        guard let text = (try? String(contentsOf: url, encoding: .utf8)) ?? (try? String(contentsOf: url, usedEncoding: &encoding)) else {
+            importError = "파일을 읽지 못했어요. 텍스트(UTF-8) 파일인지 확인해 주세요."
+            return
+        }
+        let fileName = url.lastPathComponent
+        let parsed = Core.parseImport(text, fileName: fileName)
+        guard !parsed.cards.isEmpty else {
+            importError = "'\(fileName)'에서 카드를 찾지 못했어요. 한 줄에 \"키 = 값\"이나 탭, CSV 두 열로 적힌 파일을 써 주세요."
+            return
+        }
+        let skipped = parsed.skipped > 0 ? " 나눌 수 없는 \(parsed.skipped)줄은 건너뛰었어요." : ""
+        editorTarget = .draft(DeckDraft(name: url.deletingPathExtension().lastPathComponent, category: draftCategory,
+                                        cards: parsed.cards, note: "'\(fileName)'에서 \(parsed.cards.count)장을 불러왔어요.\(skipped)"))
+    }
+
     func importPDF(at url: URL) {
         importTask?.cancel()
         let fileName = url.deletingPathExtension().lastPathComponent
+        let category = draftCategory
         importStatus = ImportStatus(fileName: fileName, phase: "PDF 읽는 중", progress: 0)
         importTask = Task { @MainActor [weak self] in
             let scoped = url.startAccessingSecurityScopedResource()
@@ -335,7 +424,7 @@ final class AppModel {
                     }
                 }
                 guard !pdf.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ImportError.noText }
-                let draft = try await Self.makeDraft(from: pdf, fileName: fileName) { done, total in
+                let draft = try await Self.makeDraft(from: pdf, fileName: fileName, category: category) { done, total in
                     await MainActor.run {
                         self?.importStatus?.phase = "Apple Intelligence가 카드를 만드는 중 \(done)/\(total)"
                         self?.importStatus?.progress = 0.2 + 0.8 * Double(done - 1) / Double(max(total, 1))
@@ -360,7 +449,7 @@ final class AppModel {
         importStatus = nil
     }
 
-    private static func makeDraft(from pdf: PDFTextExtractor.Result, fileName: String,
+    private static func makeDraft(from pdf: PDFTextExtractor.Result, fileName: String, category: String,
                                   progress: @escaping @Sendable (Int, Int) async -> Void) async throws -> DeckDraft {
         let name = pdf.title ?? fileName
         let ocrNote = pdf.ocrPages > 0 ? " 스캔된 \(pdf.ocrPages)쪽은 문자 인식으로 읽었어요." : ""
@@ -368,14 +457,14 @@ final class AppModel {
             // Without Apple Intelligence, fall back to lines that already look like "key = value".
             let parsed = Core.parseCardsDetailed(pdf.text).cards
             guard !parsed.isEmpty else { throw ImportError.unavailable(reason) }
-            return DeckDraft(name: name, category: "PDF", cards: parsed,
+            return DeckDraft(name: name, category: category, cards: parsed,
                              note: "\(reason) 대신 구분자가 있는 줄 \(parsed.count)개를 카드로 만들었어요.\(ocrNote)")
         }
         let chunks = PDFTextExtractor.chunks(pdf.text)
         let output = try await DeckGenerator.cards(from: chunks, progress: progress)
         guard !output.cards.isEmpty else { throw ImportError.noCards }
         let failed = output.failedChunks > 0 ? " 처리하지 못한 구간이 \(output.failedChunks)개 있어요." : ""
-        return DeckDraft(name: name, category: "PDF", cards: output.cards,
+        return DeckDraft(name: name, category: category, cards: output.cards,
                          note: "Apple Intelligence가 \(output.cards.count)장을 만들었어요. 저장하기 전에 확인해 주세요.\(ocrNote)\(failed)")
     }
 }

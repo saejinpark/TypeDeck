@@ -111,7 +111,7 @@ struct DeckEditorView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("카테고리").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     HStack(spacing: 4) {
-                        TextField("예: 토익", text: Binding(get: { category }, set: { if $0 != category { category = $0; dirty = true } }),
+                        TextField("예: 정보처리기사", text: Binding(get: { category }, set: { if $0 != category { category = $0; dirty = true } }),
                                   prompt: Text("비우면 미분류"))
                             .textFieldStyle(.roundedBorder)
                             .focused($focus, equals: .category)
@@ -196,7 +196,8 @@ struct DeckEditorView: View {
         switch target {
         case .new: return "새 덱"
         case .deck: return "덱 편집"
-        case .draft: return "PDF에서 만든 덱"
+        case .newIn: return "새 덱"
+        case .draft: return "자료로 만든 덱"
         }
     }
 
@@ -473,6 +474,8 @@ struct DeckEditorView: View {
             }
         case .new:
             category = model.selectedDeck?.category ?? ""
+        case .newIn(let c):
+            category = c
         case .draft(let draft):
             name = draft.name
             category = draft.category

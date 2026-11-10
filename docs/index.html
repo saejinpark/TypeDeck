@@ -21,8 +21,11 @@
       </div>
       <nav class="deck-list" id="deckList" aria-label="덱 목록"></nav>
       <div class="sidebar-foot">
-        <button class="ghost-btn keep-focus" id="newDeck" type="button">＋ 새 덱</button>
-        <button class="link-btn keep-focus" id="restoreDecks" type="button">기본 덱 추가</button>
+        <div class="foot-buttons">
+          <button class="ghost-btn keep-focus" id="newCategory" type="button">＋ 새 카테고리</button>
+          <button class="ghost-btn keep-focus" id="newDeck" type="button">＋ 새 덱</button>
+        </div>
+        <button class="link-btn keep-focus" id="restoreDecks" type="button">토익 단어장 추가</button>
         <span class="note" id="sidebarNote" role="status"></span>
       </div>
     </aside>
@@ -69,7 +72,7 @@
       <div class="field-row">
         <label class="field">
           <span>카테고리</span>
-          <input id="editorCategory" maxlength="40" autocomplete="off" list="categoryList" placeholder="예: 토익 (비우면 미분류)">
+          <input id="editorCategory" maxlength="40" autocomplete="off" list="categoryList" placeholder="예: 정보처리기사 (비우면 미분류)">
           <datalist id="categoryList"></datalist>
         </label>
         <label class="field grow">
@@ -81,6 +84,8 @@
         <div class="cards-head">
           <span>카드 <em id="editorCount">0장</em></span>
           <span class="cards-tip"><kbd>Enter</kbd>다음 칸 · 여러 줄 붙여넣기 가능</span>
+          <button type="button" class="link-btn" id="editorImport" title="텍스트(키 = 값), CSV, TSV 파일의 카드를 넣습니다">파일에서 불러오기</button>
+          <input type="file" id="editorFile" accept=".txt,.csv,.tsv,.md,text/plain,text/csv,text/tab-separated-values" hidden>
         </div>
         <div class="card-rows" id="editorRows">
           <div class="card-rows-header"><span></span><span>키</span><span>값 <small>여러 개면 쉼표로 구분</small></span><span></span></div>

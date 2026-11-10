@@ -15,7 +15,9 @@ struct TypeDeckApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("새 덱") { model.editorTarget = .new }
                     .keyboardShortcut("n")
-                Button("PDF에서 덱 만들기…") { model.showPDFImporter = true }
+                Button("새 카테고리…") { model.categoryPrompt = .new }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
+                Button("자료로 덱 만들기…") { model.startImport(into: nil) }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
                     .disabled(model.importStatus != nil)
             }

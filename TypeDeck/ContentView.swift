@@ -4,6 +4,8 @@ struct ContentView: View {
     @Environment(AppModel.self) private var model
     @State private var pendingDelete: Deck?
     @State private var pendingCategory: String?
+    @State private var categoryName = ""
+    @State private var categoryProblem: String?
 
     var body: some View {
         @Bindable var model = model
@@ -13,13 +15,29 @@ struct ContentView: View {
         } detail: {
             PracticeView()
         }
-        .fileImporter(isPresented: $model.showPDFImporter, allowedContentTypes: [.pdf]) { result in
-            if case .success(let url) = result { model.importPDF(at: url) }
+        .fileImporter(isPresented: $model.showPDFImporter, allowedContentTypes: [.pdf, .text]) { result in
+            if case .success(let url) = result { model.importFile(at: url) }
         }
         .overlay {
             if let status = model.importStatus { ImportProgressPanel(status: status) }
         }
-        .alert("PDF로 덱을 만들지 못했어요",
+        .alert(categoryPromptTitle,
+               isPresented: Binding(get: { model.categoryPrompt != nil }, set: { if !$0 { model.categoryPrompt = nil } })) {
+            TextField("예: 정보처리기사", text: $categoryName)
+            Button(model.categoryPrompt == .new ? "만들기" : "바꾸기") { commitCategory() }
+            Button("취소", role: .cancel) { model.categoryPrompt = nil; model.refocus() }
+        } message: {
+            Text(model.categoryPrompt == .new ? "공부할 주제마다 카테고리를 만들고 덱으로 정리하세요." : "덱은 그대로 두고 카테고리 이름만 바꿔요.")
+        }
+        .onChange(of: model.categoryPrompt) {
+            if case .rename(let c) = model.categoryPrompt { categoryName = c } else if model.categoryPrompt == .new { categoryName = "" }
+        }
+        .alert("카테고리", isPresented: Binding(get: { categoryProblem != nil }, set: { if !$0 { categoryProblem = nil } })) {
+            Button("확인") { categoryProblem = nil }
+        } message: {
+            Text(categoryProblem ?? "")
+        }
+        .alert("자료로 덱을 만들지 못했어요",
                isPresented: Binding(get: { model.importError != nil }, set: { if !$0 { model.importError = nil } })) {
             Button("확인") { model.importError = nil; model.refocus() }
         } message: {
@@ -46,41 +64,84 @@ struct ContentView: View {
             isPresented: Binding(get: { pendingCategory != nil }, set: { if !$0 { pendingCategory = nil } }),
             presenting: pendingCategory
         ) { category in
-            Button("모두 삭제", role: .destructive) { model.deleteCategory(category); model.refocus() }
+            let empty = !model.decks.contains { $0.category.cleanedCategory == category }
+            Button(empty ? "삭제" : "모두 삭제", role: .destructive) { model.deleteCategory(category); model.refocus() }
         } message: { category in
-            let list = model.decks.filter { $0.category.trimmingCharacters(in: .whitespaces) == category }
-            Text(list.allSatisfy(model.isBuiltIn) ? Self.comeBack : "되돌릴 수 없어요.")
+            let list = model.decks.filter { $0.category.cleanedCategory == category }
+            if list.isEmpty {
+                Text("덱이 없는 카테고리예요.")
+            } else {
+                Text(list.allSatisfy(model.isBuiltIn) ? Self.comeBack : "되돌릴 수 없어요.")
+            }
         }
     }
 
-    private static let comeBack = "기본 덱이라 사이드바 아래 '기본 덱 추가'에서 다시 넣을 수 있어요."
+    private static let comeBack = "토익 단어장 덱이라 사이드바 아래 '토익 단어장 추가'에서 다시 넣을 수 있어요."
 
     private var categoryDeleteTitle: String {
         guard let c = pendingCategory else { return "" }
-        let n = model.decks.filter { $0.category.trimmingCharacters(in: .whitespaces) == c }.count
-        return "'\(c.isEmpty ? Seed.uncategorized : c)' 카테고리의 덱 \(n)개를 모두 삭제할까요?"
+        let n = model.decks.filter { $0.category.cleanedCategory == c }.count
+        let label = c.isEmpty ? Seed.uncategorized : c
+        return n == 0 ? "빈 카테고리 '\(label)'를 삭제할까요?" : "'\(label)' 카테고리와 그 안의 덱 \(n)개를 모두 삭제할까요?"
+    }
+
+    private var categoryPromptTitle: String {
+        switch model.categoryPrompt {
+        case .rename(let c): return "'\(c.isEmpty ? Seed.uncategorized : c)' 이름 바꾸기"
+        default: return "새 카테고리"
+        }
+    }
+
+    private func commitCategory() {
+        let problem: String?
+        switch model.categoryPrompt {
+        case .new: problem = model.createCategory(categoryName)
+        case .rename(let from): problem = model.renameCategory(from, to: categoryName)
+        case nil: problem = nil
+        }
+        model.categoryPrompt = nil
+        if let problem { categoryProblem = problem } else { model.refocus() }
     }
 
     private var sidebar: some View {
         List(selection: Binding(get: { model.selectedDeckID }, set: { model.select($0) })) {
             // Headers are plain rows rather than Sections: a sidebar Section keeps its own
             // hover-only collapse state, which fights the state kept here.
-            ForEach(Seed.group(model.decks), id: \.category) { group in
+            ForEach(model.groups, id: \.category) { group in
                 let isOpen = !model.collapsedCategories.contains(group.category)
                 CategoryHeader(name: group.category.isEmpty ? Seed.uncategorized : group.category,
                                count: group.decks.count,
                                isOpen: isOpen,
                                hasCurrent: group.decks.contains { $0.id == model.selectedDeckID },
-                    onDelete: { pendingCategory = group.category }) {
+                               onAdd: { model.editorTarget = .newIn(group.category) },
+                               onDelete: { pendingCategory = group.category }) {
                     withAnimation(.easeOut(duration: 0.15)) { model.toggleCategory(group.category) }
                 }
                 .padding(.top, 6)
                 .selectionDisabled()
                 .contextMenu {
+                    Button("이 카테고리에 새 덱") { model.editorTarget = .newIn(group.category) }
+                    Button("자료로 덱 만들기…") { model.startImport(into: group.category) }
+                    Button("이름 바꾸기…") { model.categoryPrompt = .rename(group.category) }
+                    Divider()
                     Button("모두 펼치기") { model.setAllCategories(open: true) }
                     Button("모두 접기") { model.setAllCategories(open: false) }
                     Divider()
                     Button("카테고리 삭제…", role: .destructive) { pendingCategory = group.category }
+                }
+                if isOpen && group.decks.isEmpty {
+                    Button { model.editorTarget = .newIn(group.category) } label: {
+                        HStack {
+                            Text("덱이 없어요").foregroundStyle(.secondary)
+                            Spacer()
+                            Label("덱 만들기", systemImage: "plus").foregroundStyle(Palette.accent)
+                        }
+                        .font(.callout)
+                        .padding(.leading, 18)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .selectionDisabled()
                 }
                 if isOpen {
                     ForEach(group.decks) { deck in
@@ -93,7 +154,7 @@ struct ContentView: View {
                                 .monospacedDigit()
                         }
                         .padding(.leading, 18)
-                        .modifier(HoverDelete(label: "'\(deck.name)' 덱 삭제") { pendingDelete = deck })
+                        .modifier(HoverActions(actions: [.init(icon: "trash", label: "'\(deck.name)' 덱 삭제") { pendingDelete = deck }]))
                         .tag(deck.id)
                         .contextMenu {
                             Button("편집…") { model.editorTarget = .deck(deck.id) }
@@ -108,7 +169,7 @@ struct ContentView: View {
             if let deck = model.selectedDeck { pendingDelete = deck }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if Seed.group(model.decks).count > 1 {
+            if model.groups.count > 1 {
                 HStack {
                     Text("덱")
                         .font(.caption.weight(.semibold))
@@ -129,24 +190,34 @@ struct ContentView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
-                Button {
-                    model.editorTarget = .new
-                } label: {
-                    Label("새 덱", systemImage: "plus")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 6) {
+                    Button {
+                        model.categoryPrompt = .new
+                    } label: {
+                        Label("새 카테고리", systemImage: "folder.badge.plus")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .help("공부할 주제마다 카테고리를 만드세요 (⇧⌘N)")
+                    Button {
+                        model.editorTarget = .new
+                    } label: {
+                        Label("새 덱", systemImage: "plus")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .help("지금 카테고리에 새 덱을 만듭니다 (⌘N)")
                 }
                 .controlSize(.large)
                 Button {
-                    model.showPDFImporter = true
+                    model.startImport(into: nil)
                 } label: {
-                    Label("PDF로 덱 만들기", systemImage: "apple.intelligence")
+                    Label("자료로 덱 만들기", systemImage: "doc.text.magnifyingglass")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .help("Apple Intelligence가 PDF 내용으로 카드를 만들어요 (⇧⌘O)")
-                Button("기본 덱 추가") { model.deckPicker = .add }
+                .help("PDF는 Apple Intelligence가 카드를 만들고, 텍스트·CSV 파일은 줄마다 카드로 읽어요 (⇧⌘O)")
+                Button("토익 단어장 추가") { model.deckPicker = .add }
                     .buttonStyle(.link)
                     .font(.caption)
-                    .help("토익 단어 덱을 골라서 넣습니다")
+                    .help("예시로 들어 있는 토익 영단어 덱을 골라서 넣습니다")
             }
             .padding(12)
         }
@@ -160,6 +231,7 @@ private struct CategoryHeader: View {
     let count: Int
     let isOpen: Bool
     let hasCurrent: Bool
+    var onAdd: (() -> Void)?
     var onDelete: (() -> Void)?
     let toggle: () -> Void
 
@@ -187,34 +259,43 @@ private struct CategoryHeader: View {
         .help(isOpen ? "접기" : "펼치기")
         .accessibilityLabel("\(name) 카테고리, 덱 \(count)개")
         .accessibilityValue(isOpen ? "펼쳐짐" : "접힘")
-        if let onDelete {
-            header.modifier(HoverDelete(label: "'\(name)' 카테고리 삭제", action: onDelete))
-        } else {
-            header
-        }
+        header.modifier(HoverActions(actions: [
+            onAdd.map { HoverActions.Item(icon: "plus", label: "'\(name)'에 새 덱 만들기", action: $0) },
+            onDelete.map { HoverActions.Item(icon: "trash", label: "'\(name)' 카테고리 삭제", action: $0) },
+        ].compactMap { $0 }))
     }
 }
 
-/// A trash button that shows over the trailing edge of a sidebar row while it is hovered.
-private struct HoverDelete: ViewModifier {
-    let label: String
-    let action: () -> Void
+/// Small buttons that show over the trailing edge of a sidebar row while it is hovered.
+private struct HoverActions: ViewModifier {
+    struct Item {
+        let icon: String
+        let label: String
+        let action: () -> Void
+    }
+    let actions: [Item]
     @State private var hovering = false
 
     func body(content: Content) -> some View {
         content
             .overlay(alignment: .trailing) {
                 if hovering {
-                    Button(action: action) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11, weight: .medium))
-                            .frame(width: 22, height: 20)
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+                    HStack(spacing: 2) {
+                        ForEach(actions.indices, id: \.self) { i in
+                            Button(action: actions[i].action) {
+                                Image(systemName: actions[i].icon)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .frame(width: 22, height: 20)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help(actions[i].label)
+                            .accessibilityLabel(actions[i].label)
+                        }
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, 2)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
                     .foregroundStyle(.secondary)
-                    .help(label)
-                    .accessibilityLabel(label)
                 }
             }
             .onHover { hovering = $0 }

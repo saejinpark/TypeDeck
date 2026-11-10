@@ -340,3 +340,80 @@ struct ColumnLayoutTests {
         #expect(c.dividerX > ColumnLayout.inset + ColumnLayout.number + c.key)
     }
 }
+
+struct CategoryListTests {
+    @Test func emptyCategoriesComeFromTheListInOrder() {
+        let decks = [Deck(id: "1", name: "", category: "토익", cards: []), Deck(id: "2", name: "", cards: []),
+                     Deck(id: "3", name: "", category: " 정보처리기사 ", cards: [])]
+        let g = Seed.group(decks, order: ["정보처리기사", "한국사"])
+        #expect(g.map(\.category) == ["정보처리기사", "한국사", "토익", ""])
+        #expect(g[1].decks.isEmpty)
+        #expect(Seed.sync(["한국사"], with: decks) == ["한국사", "토익", "정보처리기사"])
+    }
+
+    @Test func renameMovesDecksAndMerges() {
+        let decks = [Deck(id: "1", name: "", category: "A", cards: []), Deck(id: "2", name: "", category: "B", cards: [])]
+        let r = Seed.rename("A", to: "  새  이름 ", decks: decks, order: ["A", "B", "C"])
+        #expect(r.order == ["새 이름", "B", "C"])
+        #expect(r.decks[0].category == "새 이름")
+        let m = Seed.rename("A", to: "C", decks: decks, order: ["A", "B", "C"])
+        #expect(m.order == ["B", "C"])
+        #expect(m.decks[0].category == "C")
+    }
+
+    @Test func importReadsCSVWithQuotesTSVAndText() {
+        let csv = "\u{FEFF}apply,\"지원하다, 신청하다\"\nhire,고용하다\n\"say \"\"hi\"\"\",인사\nonly\n"
+        let r = Core.parseImport(csv, fileName: "w.csv")
+        #expect(r.cards == [Card("apply", "지원하다, 신청하다"), Card("hire", "고용하다"), Card("say \"hi\"", "인사")])
+        #expect(r.skipped == 1)
+        #expect(Core.parseImport("a,b,c", fileName: "x.CSV").cards == [Card("a", "b, c")])
+        #expect(Core.parseImport("a\t1, 2", fileName: "x.tsv").cards == [Card("a", "1, 2")])
+        #expect(Core.parseImport("OSI 7계층 = 물리, 데이터링크", fileName: "notes.txt").cards == [Card("OSI 7계층", "물리, 데이터링크")])
+    }
+}
+
+@MainActor
+struct CategoryModelTests {
+    private func model(store: URL, defaults: UserDefaults) -> AppModel {
+        AppModel(storeURL: store, defaults: defaults, bundle: Bundle(for: Session.self))
+    }
+
+    @Test func emptyCategorySurvivesARelaunchAndGetsDecks() {
+        let suite = "TypeDeckTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let store = FileManager.default.temporaryDirectory.appendingPathComponent("\(suite).json")
+        let first = model(store: store, defaults: defaults)
+        first.addBuiltIn(categories: [], firstRun: true)
+        #expect(first.createCategory("정보처리기사") == nil)
+        #expect(first.createCategory(" 정보처리기사 ") != nil, "duplicates are refused")
+        #expect(first.createCategory(Seed.uncategorized) != nil)
+        #expect(first.groups.map(\.category) == ["정보처리기사"])
+
+        let again = model(store: store, defaults: defaults)
+        #expect(again.categories == ["정보처리기사"])
+        again.upsert(id: nil, name: "네트워크", category: "정보처리기사", cards: [Card("OSI 1계층", "물리 계층")])
+        #expect(again.selectedDeck?.category == "정보처리기사")
+        #expect(again.renameCategory("정보처리기사", to: "정보처리기사 필기") == nil)
+        #expect(again.selectedDeck?.category == "정보처리기사 필기")
+        again.deleteCategory("정보처리기사 필기")
+        #expect(again.decks.isEmpty)
+        #expect(again.categories.isEmpty)
+    }
+
+    @Test func csvFileBecomesADraftInTheChosenCategory() throws {
+        let suite = "TypeDeckTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let dir = FileManager.default.temporaryDirectory
+        let m = model(store: dir.appendingPathComponent("\(suite).json"), defaults: defaults)
+        m.addBuiltIn(categories: [], firstRun: true)
+        m.createCategory("한국사")
+        let file = dir.appendingPathComponent("\(suite) 조선 왕.csv")
+        try "태조,이성계\n세종,\"이도, 한글 창제\"\n".write(to: file, atomically: true, encoding: .utf8)
+        m.importCategory = "한국사"
+        m.importFile(at: file)
+        guard case .draft(let draft) = m.editorTarget else { Issue.record("no draft"); return }
+        #expect(draft.category == "한국사")
+        #expect(draft.name == "\(suite) 조선 왕")
+        #expect(draft.cards == [Card("태조", "이성계"), Card("세종", "이도, 한글 창제")])
+    }
+}

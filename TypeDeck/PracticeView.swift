@@ -430,14 +430,28 @@ private struct EmptyCard: View {
     @Environment(AppModel.self) private var model
     var body: some View {
         VStack(spacing: 12) {
-            Text(model.decks.isEmpty ? "덱이 없어요." : "이 덱에는 카드가 없어요.")
-                .foregroundStyle(Palette.muted)
-            Button(model.decks.isEmpty ? "새 덱 만들기" : "카드 추가하기") {
-                if let id = model.selectedDeckID { model.editorTarget = .deck(id) } else { model.editorTarget = .new }
-            }
-            .buttonStyle(.borderedProminent)
-            if model.decks.isEmpty && !model.seed.isEmpty {
-                Button("토익 단어 덱 넣기") { model.deckPicker = .add }
+            if model.decks.isEmpty {
+                Text("아직 덱이 없어요. 공부할 주제마다 카테고리를 만들고, 외울 것을 덱으로 정리해 보세요.")
+                    .foregroundStyle(Palette.muted)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 340)
+                HStack {
+                    Button("새 카테고리") { model.categoryPrompt = .new }
+                        .buttonStyle(.borderedProminent)
+                    Button("새 덱") { model.editorTarget = .new }
+                    Button("자료로 덱 만들기") { model.startImport(into: nil) }
+                }
+                if !model.seed.isEmpty {
+                    Button("토익 단어장 넣기") { model.deckPicker = .add }
+                        .buttonStyle(.link)
+                }
+            } else {
+                Text("이 덱에는 카드가 없어요.")
+                    .foregroundStyle(Palette.muted)
+                Button("카드 추가하기") {
+                    if let id = model.selectedDeckID { model.editorTarget = .deck(id) }
+                }
+                .buttonStyle(.borderedProminent)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

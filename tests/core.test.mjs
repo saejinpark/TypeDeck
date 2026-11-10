@@ -147,7 +147,7 @@ test('parseCardsDetailed counts lines it could not use', () => {
   assert.equal(r.skipped, 2);
 });
 
-import { migrateDecks, groupDecks, collapsedExcept, seedCategories, addSeedDecks, SEED_VERSION } from '../docs/core.js';
+import { migrateDecks, groupDecks, collapsedExcept, seedCategories, addSeedDecks, syncCategories, renameCategory, parseImport, SEED_VERSION } from '../docs/core.js';
 
 
 test('multiple choice offers the answer and distinct distractors', () => {
@@ -263,4 +263,29 @@ test('seedCategories reports what is missing and addSeedDecks keeps seed order f
   const next = addSeedDecks([mine, seed[2]], seed, [seed[0]]);
   assert.deepEqual(next.map((d) => d.id), ['b1', 'm1', 'mine']);
   assert.deepEqual(addSeedDecks([], seed, []), []);
+});
+
+test('empty categories from the list are kept, in order, before uncategorized decks', () => {
+  const decks = [{ id: 1, category: '토익' }, { id: 2 }, { id: 3, category: ' 정보처리기사 ' }];
+  const g = groupDecks(decks, ['정보처리기사', '한국사']);
+  assert.deepEqual(g.map((x) => [x.category, x.decks.map((d) => d.id)]), [['정보처리기사', [3]], ['한국사', []], ['토익', [1]], ['', [2]]]);
+  assert.deepEqual(syncCategories(['한국사'], decks), ['한국사', '토익', '정보처리기사']);
+});
+
+test('renameCategory moves decks and merges into an existing category', () => {
+  const decks = [{ id: 1, category: 'A' }, { id: 2, category: 'B' }];
+  const r = renameCategory(decks, ['A', 'B', 'C'], 'A', '  새 이름 ');
+  assert.deepEqual(r.order, ['새 이름', 'B', 'C']);
+  assert.equal(r.decks[0].category, '새 이름');
+  const m = renameCategory(decks, ['A', 'B', 'C'], 'A', 'C');
+  assert.deepEqual(m.order, ['B', 'C']);
+  assert.equal(m.decks[0].category, 'C');
+});
+
+test('parseImport reads CSV with quotes, TSV and plain text', () => {
+  const csv = '\uFEFFapply,"지원하다, 신청하다"\nhire,고용하다\n"say ""hi""",인사\nonly\n';
+  assert.deepEqual(parseImport(csv, 'w.csv'), { cards: [['apply', '지원하다, 신청하다'], ['hire', '고용하다'], ['say "hi"', '인사']], skipped: 1 });
+  assert.deepEqual(parseImport('a,b,c', 'x.csv').cards, [['a', 'b, c']]);
+  assert.deepEqual(parseImport('a\t1, 2', 'x.tsv').cards, [['a', '1, 2']]);
+  assert.deepEqual(parseImport('OSI 7계층 = 물리, 데이터링크', 'notes.txt').cards, [['OSI 7계층', '물리, 데이터링크']]);
 });

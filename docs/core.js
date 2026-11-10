@@ -435,15 +435,87 @@ export function collapsedExcept(decks, deckId) {
   return [...new Set(decks.map((d) => (d.category ?? '').trim()))].filter((c) => c !== open);
 }
 
-/** Groups decks by category in order of first appearance; decks without one go last. */
-export function groupDecks(decks) {
+/** Category names are trimmed and inner runs of spaces collapsed. */
+export const cleanCategory = (name) => (name ?? '').trim().replace(/\s+/g, ' ');
+
+/**
+ * Groups decks by category. `order` is the user's category list, which may hold empty
+ * categories; categories only found on decks follow it, and uncategorized decks go last.
+ */
+export function groupDecks(decks, order = []) {
   const groups = new Map();
+  for (const name of order) {
+    const n = cleanCategory(name);
+    if (n && !groups.has(n)) groups.set(n, []);
+  }
   for (const deck of decks) {
-    const name = (deck.category ?? '').trim();
+    const name = cleanCategory(deck.category);
     if (!groups.has(name)) groups.set(name, []);
     groups.get(name).push(deck);
   }
   const out = [...groups].filter(([name]) => name).map(([name, list]) => ({ category: name, decks: list }));
   if (groups.has('')) out.push({ category: '', decks: groups.get('') });
   return out;
+}
+
+/** The category list with every category used by a deck, keeping the existing order. */
+export function syncCategories(order, decks) {
+  return groupDecks(decks, order ?? []).map((g) => g.category).filter(Boolean);
+}
+
+/**
+ * Renames a category on every deck and in the list. Renaming onto an existing category merges
+ * the two, keeping the target's place.
+ */
+export function renameCategory(decks, order, from, to) {
+  const target = cleanCategory(to);
+  const nextDecks = decks.map((d) => (cleanCategory(d.category) === from ? { ...d, category: target } : d));
+  const list = syncCategories(order, decks);
+  const nextOrder = list.includes(target)
+    ? list.filter((c) => c !== from)
+    : list.map((c) => (c === from ? target : c));
+  return { decks: nextDecks, order: syncCategories(nextOrder, nextDecks) };
+}
+
+/** Splits one CSV line into fields; quotes may wrap fields and "" is a literal quote. */
+function csvFields(line, sep) {
+  const out = [];
+  let cur = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (ch === '"') quoted = false; else cur += ch;
+    } else if (ch === '"' && !cur.trim()) {
+      quoted = true;
+      cur = '';
+    } else if (ch === sep) {
+      out.push(cur);
+      cur = '';
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out.map((f) => f.trim());
+}
+
+/**
+ * Reads cards from an imported file. CSV and TSV take the first two columns (a comma inside
+ * quotes stays in the value, so "지원하다, 신청하다" keeps both meanings); anything else uses
+ * the same separators as pasting.
+ */
+export function parseImport(text, fileName = '') {
+  const ext = (fileName.split('.').pop() ?? '').toLowerCase();
+  if (ext !== 'csv' && ext !== 'tsv') return parseCardsDetailed(text);
+  const sep = ext === 'tsv' ? '\t' : ',';
+  const cards = [];
+  let skipped = 0;
+  for (const raw of (text ?? '').replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    if (!raw.trim()) continue;
+    const [q = '', ...rest] = csvFields(raw, sep);
+    // Unquoted extra columns are treated as more meanings of the same value.
+    const a = rest.filter(Boolean).join(', ');
+    if (q && a) cards.push([q, a]);
+    else skipped++;
+  }
+  return { cards, skipped };
 }

@@ -1,4 +1,4 @@
-import { parseCards, parseCardsDetailed, serializeCards } from './core.js';
+import { parseCards, parseCardsDetailed, parseImport, serializeCards } from './core.js';
 
 /*
  * Deck editor: a two-column list of key/value fields.
@@ -98,6 +98,12 @@ export function setupEditor() {
       if (e.metaKey || e.ctrlKey) return save();
       focusCell(0, 'k');
     }
+  });
+  $('#editorImport').addEventListener('click', () => $('#editorFile').click());
+  $('#editorFile').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) importFile(file.name, await file.text());
   });
   $('#editorName').addEventListener('input', () => { dirty = true; });
   $('#editorCategory').addEventListener('input', () => { dirty = true; });
@@ -268,6 +274,24 @@ function removeRow(i, then) {
   renderRows();
   if (then === 'v-prev') focusCell(Math.max(0, i - 1), 'v');
   else focusCell(Math.min(i, rows.length - 1), 'k');
+}
+
+/** Adds the cards of an imported file after the existing ones. */
+function importFile(fileName, text) {
+  const { cards, skipped } = parseImport(text, fileName);
+  if (!cards.length) {
+    note(`'${fileName}'에서 카드를 찾지 못했어요. 한 줄에 "키 = 값"이나 탭, CSV 두 열로 적힌 파일을 써 주세요.`);
+    return;
+  }
+  if (view === 'text') setView('rows');
+  rows = rows.filter((r) => !isBlank(r)).concat(cards.map(([q, a]) => ({ q, a })));
+  ensureTrailingBlank();
+  renderRows();
+  if (!$('#editorName').value.trim()) $('#editorName').value = fileName.replace(/\.[^.]+$/, '');
+  dirty = true;
+  updateCount();
+  focusCell(rows.length - 1, 'k');
+  note(`'${fileName}'에서 ${cards.length}장을 불러왔어요.` + (skipped ? ` 나눌 수 없는 ${skipped}줄은 건너뛰었어요.` : ''));
 }
 
 function onRowPaste(e) {

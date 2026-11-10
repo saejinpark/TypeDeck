@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Chooses which built-in TOEIC decks to add: the welcome sheet on first launch, or
-/// "기본 덱 추가" later.
+/// "토익 단어장 추가" later.
 struct DeckPickerView: View {
     @Environment(AppModel.self) private var model
     let mode: DeckPickerMode
@@ -17,11 +17,11 @@ struct DeckPickerView: View {
                     .resizable()
                     .frame(width: 52, height: 52)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(firstRun ? "TypeDeck에 오신 걸 환영해요" : "기본 덱 추가")
+                    Text(firstRun ? "TypeDeck에 오신 걸 환영해요" : "토익 단어장 추가")
                         .font(.title2.weight(.bold))
                     Text(firstRun
-                         ? "카드에 나온 단어의 뜻을 치면 바로 다음 카드로 넘어가요. 토익 영단어 덱을 넣어 드릴까요? 나중에 사이드바 아래 '기본 덱 추가'에서 언제든 넣을 수 있어요."
-                         : "넣을 토익 덱을 고르세요. 이미 있는 덱은 그대로 두고 빠진 덱만 넣어요.")
+                         ? "외울 것을 카드로 만들어 손으로 치면서 익혀요. 키를 보고 값을 치면 바로 다음 카드로 넘어가요. 자격증, 외국어, 용어처럼 공부할 주제마다 카테고리를 만들고 덱으로 정리하세요.\n\n예시로 토익 영단어장을 넣어 둘까요? 필요 없으면 빈 상태로 시작해도 되고, 나중에 사이드바 아래 '토익 단어장 추가'에서 넣을 수 있어요."
+                         : "넣을 토익 단어장을 고르세요. 이미 있는 덱은 그대로 두고 빠진 덱만 넣어요.")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
