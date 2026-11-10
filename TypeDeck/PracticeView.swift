@@ -15,7 +15,8 @@ struct PracticeView: View {
                     onText: { text, composing in model.handleText(text, composing: composing) },
                     onCommand: { model.handle($0) },
                     onKeystroke: { model.keystroke() },
-                    onFocusChange: { focused in model.isTypingFocused = focused }
+                    onFocusChange: { focused in model.isTypingFocused = focused },
+                    onNumberKey: { model.handleChoiceKey($0) }
                 )
                 stage
                     .frame(maxWidth: 640)
@@ -35,9 +36,10 @@ struct PracticeView: View {
                     ForEach(PracticeMode.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .help("따라치기: 정답을 보며 입력 · 외워치기: 기억해서 입력 (⌘1, ⌘2)")
+                .help("따라치기: 정답을 보며 입력 · 외워치기: 기억해서 입력 · 5지선다: 1-5로 고르기 (⌘1, ⌘2, ⌘3)")
                 Toggle(isOn: $model.reverse) { Label("뒤집기", systemImage: "arrow.left.arrow.right") }
-                    .help("키와 값의 방향을 바꿉니다 (⇧⌘R)")
+                    .help(model.mode == .choice ? "5지선다에서는 방향을 바꾸지 않아요" : "키와 값의 방향을 바꿉니다 (⇧⌘R)")
+                    .disabled(model.mode == .choice)
                 Toggle(isOn: $model.shuffle) { Label("섞기", systemImage: "shuffle") }
                     .help("카드 순서를 섞습니다")
                 Button {
@@ -100,6 +102,7 @@ private struct CardStack: View {
 
     var body: some View {
         let depth = min(2, session.remaining - 1)
+        let height: CGFloat = model.mode == .choice ? 420 : 340
         ZStack {
             ForEach((1...max(depth, 1)).reversed(), id: \.self) { d in
                 if d <= depth {
@@ -110,7 +113,14 @@ private struct CardStack: View {
                         .opacity(d == 1 ? 0.7 : 0.4)
                 }
             }
-            if let item = session.current {
+            if let item = session.current, model.mode == .choice {
+                ChoiceCard(session: session, item: item)
+                    .id(session.pos)
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.975, anchor: .bottom).combined(with: .offset(y: 10)),
+                        removal: .offset(x: 60, y: -28).combined(with: .opacity)
+                    ))
+            } else if let item = session.current {
                 FrontCard(session: session, item: item)
                     .id(session.pos)
                     .transition(.asymmetric(
@@ -119,7 +129,7 @@ private struct CardStack: View {
                     ))
             }
         }
-        .frame(height: 340)
+        .frame(height: height)
         .animation(.easeOut(duration: 0.15), value: session.pos)
     }
 }
@@ -162,6 +172,70 @@ private struct FrontCard: View {
         .padding(.bottom, 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .modifier(CardShape(border: hasError ? Palette.bad : Palette.line))
+        .offset(x: shake)
+        .onChange(of: model.shakeToken) {
+            withAnimation(.interpolatingSpring(stiffness: 900, damping: 9)) { shake = 9 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                withAnimation(.interpolatingSpring(stiffness: 900, damping: 9)) { shake = 0 }
+            }
+        }
+    }
+}
+
+private struct ChoiceCard: View {
+    @Environment(AppModel.self) private var model
+    let session: Session
+    let item: Session.Item
+    @State private var shake: CGFloat = 0
+
+    var body: some View {
+        let showRight = session.revealed || !session.wrongPicks.isEmpty
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Pill(text: session.revealed ? "정답 공개" : "문제", highlighted: session.revealed)
+                Spacer()
+                Text("남은 카드 \(session.remaining)")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Palette.muted)
+                    .monospacedDigit()
+            }
+            Text(item.q)
+                .font(.system(size: 38, weight: .bold))
+                .tracking(-0.8)
+                .foregroundStyle(Palette.ink)
+                .lineLimit(2)
+                .minimumScaleFactor(0.5)
+                .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
+            VStack(spacing: 7) {
+                ForEach(Array(session.choices.enumerated()), id: \.offset) { i, text in
+                    let wrong = session.wrongPicks.contains(i)
+                    let right = showRight && i == session.answerIndex
+                    Button { model.choose(i) } label: {
+                        HStack(spacing: 12) {
+                            KeyCap(label: "\(i + 1)")
+                            Text(text)
+                                .font(.system(size: 17, weight: .medium))
+                                .foregroundStyle(wrong ? Palette.bad : Palette.ink)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 12)
+                            .fill(wrong ? Palette.bad.opacity(0.14) : right ? Palette.good.opacity(0.14) : Palette.panel))
+                        .overlay(RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(wrong ? Palette.bad : right ? Palette.good : Palette.line))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.horizontal, 30)
+        .padding(.top, 26)
+        .padding(.bottom, 22)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .modifier(CardShape())
         .offset(x: shake)
         .onChange(of: model.shakeToken) {
             withAnimation(.interpolatingSpring(stiffness: 900, damping: 9)) { shake = 9 }
@@ -348,12 +422,20 @@ private struct StatusBar: View {
             if let s = model.session {
                 stat("진행", "\(min(s.pos + 1, s.queue.count))/\(s.queue.count)")
                 stat("정확도", percent(s.accuracy))
-                stat("타/분", number(s.kpm))
+                if model.mode == .choice {
+                    stat("남음", "\(s.remaining)")
+                } else {
+                    stat("타/분", number(s.kpm))
+                }
                 stat("연속", "\(s.streak)")
                 Spacer()
                 if s.finished {
                     hint("return", "다시 하기")
                     if !s.missed.isEmpty { hint("tab", "틀린 카드만") }
+                } else if model.mode == .choice {
+                    hint("1–\(s.choices.count)", "고르기")
+                    hint("return", "정답 보기")
+                    hint("tab", "건너뛰기")
                 } else {
                     hint("return", "정답 보기")
                     hint("tab", "건너뛰기")

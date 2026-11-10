@@ -15,6 +15,9 @@ struct TypeDeckApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("새 덱") { model.editorTarget = .new }
                     .keyboardShortcut("n")
+                Button("PDF에서 덱 만들기…") { model.showPDFImporter = true }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                    .disabled(model.importStatus != nil)
             }
             CommandMenu("연습") {
                 Button("처음부터 다시") { model.startSession() }
@@ -29,6 +32,8 @@ struct TypeDeckApp: App {
                     .keyboardShortcut("1")
                 Button("외워치기") { model.mode = .recall; model.refocus() }
                     .keyboardShortcut("2")
+                Button("5지선다") { model.mode = .choice; model.refocus() }
+                    .keyboardShortcut("3")
                 Button("방향 뒤집기") { model.reverse.toggle() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
             }

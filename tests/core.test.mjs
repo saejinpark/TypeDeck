@@ -146,3 +146,42 @@ test('parseCardsDetailed counts lines it could not use', () => {
   assert.deepEqual(r.cards, [['a', '1'], ['c', '3']]);
   assert.equal(r.skipped, 2);
 });
+
+import { migrateDecks, groupDecks, SEED_VERSION } from '../docs/core.js';
+
+
+test('multiple choice offers the answer and distinct distractors', () => {
+  const cards = Array.from({ length: 8 }, (_, i) => [`w${i}`, `m${i}`]);
+  const s = new Session(cards, { shuffle: false, choices: 5, reverse: true });
+  assert.equal(s.current.q, 'w0', 'reverse is ignored in multiple choice');
+  assert.equal(s.choices.length, 5);
+  assert.equal(new Set(s.choices).size, 5);
+  assert.ok(s.choices.includes('m0'));
+  const wrong = s.choices.findIndex((c) => c !== 'm0');
+  assert.equal(s.choose(wrong, 0), 'wrong');
+  assert.ok(s.wrongPicks.has(wrong));
+  assert.equal(s.choose(s.answerIndex, 1), 'advance');
+  assert.equal(s.current.q, 'w1');
+  assert.equal(s.choices.length, 5);
+  assert.equal(s.missed.length, 1, 'a wrong pick counts as a miss');
+  assert.equal(s.queue.length, 9, 'and the card comes back');
+});
+
+test('multiple choice with a small deck uses what it has', () => {
+  const s = new Session([['a', '1'], ['b', '2'], ['c', '2']], { shuffle: false, choices: 5 });
+  assert.deepEqual([...s.choices].sort(), ['1', '2']);
+  assert.equal(s.choose(9, 0), 'none');
+});
+
+test('migrateDecks replaces retired built-in decks once', () => {
+  const seed = [{ id: 'toeic-1', name: 'T', category: '토익', cards: [['a', '1']] }];
+  const old = [{ id: 'proverbs', name: 'P', cards: [] }, { id: 'mine', name: 'M', cards: [['x', 'y']] }];
+  const next = migrateDecks(old, 1, seed);
+  assert.deepEqual(next.map((d) => d.id), ['toeic-1', 'mine']);
+  assert.equal(migrateDecks(next, SEED_VERSION, seed), next);
+});
+
+test('groupDecks keeps first-seen order and puts uncategorized last', () => {
+  const g = groupDecks([{ id: 1, category: '토플' }, { id: 2 }, { id: 3, category: '토익' }, { id: 4, category: '토플' }]);
+  assert.deepEqual(g.map((x) => [x.category, x.decks.map((d) => d.id)]), [['토플', [1, 4]], ['토익', [3]], ['', [2]]]);
+});

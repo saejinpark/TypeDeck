@@ -68,7 +68,11 @@ export const MAX_REQUEUES = 3;
 
 /** One round through a deck. Cards that were missed come back a few cards later. */
 export class Session {
-  constructor(cards, { shuffle = true, reverse = false, rng = Math.random } = {}) {
+  /** `choices` > 1 turns on multiple choice with that many options (reverse is ignored then). */
+  constructor(cards, { shuffle = true, reverse = false, rng = Math.random, choices = 0 } = {}) {
+    if (choices > 1) reverse = false;
+    this.choiceCount = choices > 1 ? choices : 0;
+    this.rng = rng;
     this.items = cards.map(([q, a], id) => ({
       id,
       q: reverse ? a : q,
@@ -92,6 +96,34 @@ export class Session {
     this.revealed = false;
     this.hadError = false;
     this.cardStart = null;
+    this.wrongPicks = new Set();
+    this.choices = this.choiceCount ? this.buildChoices() : [];
+  }
+
+  /** The answer plus distractors drawn from other cards' answers, shuffled. */
+  buildChoices() {
+    const card = this.current;
+    if (!card) return [];
+    const pool = [...new Set(this.items.map((it) => it.a))].filter((a) => a !== card.a);
+    const picks = shuffled(pool, this.rng).slice(0, this.choiceCount - 1);
+    return shuffled([card.a, ...picks], this.rng);
+  }
+
+  get answerIndex() {
+    return this.current ? this.choices.indexOf(this.current.a) : -1;
+  }
+
+  /** Picks option `i`. Returns 'advance' when right, 'wrong' otherwise. */
+  choose(i, now) {
+    if (this.finished || !(i >= 0 && i < this.choices.length)) return 'none';
+    if (this.cardStart === null) this.cardStart = now;
+    if (this.choices[i] === this.current.a) {
+      this.complete(now);
+      return 'advance';
+    }
+    this.hadError = true;
+    this.wrongPicks.add(i);
+    return 'wrong';
   }
 
   get finished() { return this.pos >= this.queue.length; }
@@ -285,4 +317,34 @@ export class InputTracker {
     this.base = Math.max(0, len - chars(rest).length - carryLen);
     this.carry = carryLen ? normalize(carry) : '';
   }
+}
+
+/* ---------- decks ---------- */
+
+export const SEED_VERSION = 2;
+/** Built-in decks from earlier versions that were replaced by the vocabulary decks. */
+export const RETIRED_SEED_IDS = ['proverbs', 'http-status', 'git', 'js-methods', 'elements', 'capitals'];
+
+/** Drops retired built-in decks and adds the current built-in ones, once per seed version. */
+export function migrateDecks(decks, seedVersion, seed) {
+  if ((seedVersion ?? 1) >= SEED_VERSION) return decks;
+  const kept = decks.filter((d) => !RETIRED_SEED_IDS.includes(d.id));
+  const missing = seed.filter((s) => !kept.some((d) => d.id === s.id));
+  const clone = (d) => ({ id: d.id, name: d.name, category: d.category ?? '', cards: d.cards.map((c) => [c[0], c[1]]) });
+  return [...missing.map(clone), ...kept];
+}
+
+export const UNCATEGORIZED = '미분류';
+
+/** Groups decks by category in order of first appearance; decks without one go last. */
+export function groupDecks(decks) {
+  const groups = new Map();
+  for (const deck of decks) {
+    const name = (deck.category ?? '').trim();
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(deck);
+  }
+  const out = [...groups].filter(([name]) => name).map(([name, list]) => ({ category: name, decks: list }));
+  if (groups.has('')) out.push({ category: '', decks: groups.get('') });
+  return out;
 }

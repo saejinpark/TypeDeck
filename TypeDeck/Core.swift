@@ -27,12 +27,58 @@ struct Card: Hashable, Codable {
 struct Deck: Identifiable, Hashable, Codable {
     var id: String
     var name: String
+    /// One level of grouping in the sidebar. Empty means uncategorized.
+    var category: String = ""
     var cards: [Card]
+
+    init(id: String, name: String, category: String = "", cards: [Card]) {
+        self.id = id
+        self.name = name
+        self.category = category
+        self.cards = cards
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        category = try c.decodeIfPresent(String.self, forKey: .category) ?? ""
+        cards = try c.decode([Card].self, forKey: .cards)
+    }
 }
 
 struct DeckFile: Codable {
     var version = 1
     var decks: [Deck]
+}
+
+enum Seed {
+    static let version = 2
+    /// Built-in decks from earlier versions that were replaced by the vocabulary decks.
+    static let retiredIDs: Set<String> = ["proverbs", "http-status", "git", "js-methods", "elements", "capitals"]
+
+    /// Drops retired built-in decks and adds the current built-in ones, once per seed version.
+    static func migrate(_ decks: [Deck], from version: Int, seed: [Deck]) -> [Deck] {
+        guard version < Self.version else { return decks }
+        let kept = decks.filter { !retiredIDs.contains($0.id) }
+        let missing = seed.filter { s in !kept.contains { $0.id == s.id } }
+        return missing + kept
+    }
+
+    static let uncategorized = "미분류"
+
+    /// Groups decks by category in order of first appearance; uncategorized decks go last.
+    static func group(_ decks: [Deck]) -> [(category: String, decks: [Deck])] {
+        var order: [String] = []
+        var groups: [String: [Deck]] = [:]
+        for deck in decks {
+            let name = deck.category.trimmingCharacters(in: .whitespaces)
+            if groups[name] == nil { order.append(name) }
+            groups[name, default: []].append(deck)
+        }
+        let named = order.filter { !$0.isEmpty }.map { ($0, groups[$0]!) }
+        return named + (groups[""].map { [("", $0)] } ?? [])
+    }
 }
 
 enum CharState: Equatable {
@@ -133,12 +179,21 @@ final class Session {
     private var cardStart: TimeInterval?
     private var requeues: [Int: Int] = [:]
 
-    convenience init(cards: [Card], shuffle: Bool = true, reverse: Bool = false) {
+    /// Multiple choice: options per card, 0 when typing. Reverse is ignored with choices.
+    let choiceCount: Int
+    private(set) var choices: [String] = []
+    private(set) var wrongPicks: Set<Int> = []
+    @ObservationIgnored private var rng: AnyRandom
+
+    convenience init(cards: [Card], shuffle: Bool = true, reverse: Bool = false, choices: Int = 0) {
         var rng = SystemRandomNumberGenerator()
-        self.init(cards: cards, shuffle: shuffle, reverse: reverse, using: &rng)
+        self.init(cards: cards, shuffle: shuffle, reverse: reverse, choices: choices, using: &rng)
     }
 
-    init<R: RandomNumberGenerator>(cards: [Card], shuffle: Bool, reverse: Bool, using rng: inout R) {
+    init<R: RandomNumberGenerator>(cards: [Card], shuffle: Bool, reverse: Bool, choices: Int = 0, using rng: inout R) {
+        let reverse = choices > 1 ? false : reverse
+        choiceCount = choices > 1 ? choices : 0
+        self.rng = AnyRandom(rng)
         items = cards.enumerated().map { i, card in
             Item(id: i,
                  q: reverse ? card.value : card.key,
@@ -146,6 +201,40 @@ final class Session {
         }
         let order = Array(items.indices)
         queue = shuffle ? order.shuffled(using: &rng) : order
+        self.choices = buildChoices()
+    }
+
+    /// The answer plus distractors drawn from other cards' answers, shuffled.
+    private func buildChoices() -> [String] {
+        guard choiceCount > 0, let card = current else { return [] }
+        var seen: Set<String> = [card.a]
+        var pool: [String] = []
+        for item in items where !seen.contains(item.a) {
+            seen.insert(item.a)
+            pool.append(item.a)
+        }
+        pool.shuffle(using: &rng)
+        var options = [card.a] + pool.prefix(choiceCount - 1)
+        options.shuffle(using: &rng)
+        return options
+    }
+
+    var answerIndex: Int? { current.flatMap { choices.firstIndex(of: $0.a) } }
+
+    enum ChoiceResult { case none, advance, wrong }
+
+    /// Picks option `index`.
+    @discardableResult
+    func choose(_ index: Int, at now: TimeInterval) -> ChoiceResult {
+        guard let card = current, choices.indices.contains(index) else { return .none }
+        if cardStart == nil { cardStart = now }
+        if choices[index] == card.a {
+            complete(at: now)
+            return .advance
+        }
+        hadError = true
+        wrongPicks.insert(index)
+        return .wrong
     }
 
     var finished: Bool { pos >= queue.count }
@@ -234,6 +323,8 @@ final class Session {
         revealed = false
         hadError = false
         cardStart = nil
+        wrongPicks = []
+        choices = buildChoices()
     }
 
     var missed: [Item] {
@@ -250,4 +341,11 @@ final class Session {
         guard activeTime >= 1 else { return nil }
         return Double(keystrokes) / activeTime * 60
     }
+}
+
+/// Type-erased random number generator, so a session can keep the one it was given.
+struct AnyRandom: RandomNumberGenerator {
+    private var base: any RandomNumberGenerator
+    init(_ base: any RandomNumberGenerator) { self.base = base }
+    mutating func next() -> UInt64 { base.next() }
 }

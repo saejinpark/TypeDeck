@@ -70,9 +70,10 @@ struct DeckEditorView: View {
     let target: EditorTarget
 
     enum Mode: String, CaseIterable { case rows = "표", text = "텍스트" }
-    enum Field: Hashable { case name, key(UUID), value(UUID), text }
+    enum Field: Hashable { case category, name, key(UUID), value(UUID), text }
 
     @State private var name = ""
+    @State private var category = ""
     @State private var rows = EditorRows()
     @State private var text = ""
     @State private var mode = Mode.rows
@@ -93,7 +94,7 @@ struct DeckEditorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text(deckID == nil ? "새 덱" : "덱 편집").font(.title3.bold())
+                Text(title).font(.title3.bold())
                 Spacer()
                 Picker("편집 방식", selection: Binding(get: { mode }, set: switchMode)) {
                     ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -102,12 +103,36 @@ struct DeckEditorView: View {
                 .labelsHidden()
                 .fixedSize()
             }
-            VStack(alignment: .leading, spacing: 6) {
-                Text("이름").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                TextField("덱 이름", text: Binding(get: { name }, set: { if $0 != name { name = $0; dirty = true } }))
-                    .textFieldStyle(.roundedBorder)
-                    .focused($focus, equals: .name)
-                    .onSubmit { if let first = rows.rows.first { focus = .key(first.id) } }
+            HStack(alignment: .bottom, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("카테고리").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        TextField("예: 토익", text: Binding(get: { category }, set: { if $0 != category { category = $0; dirty = true } }),
+                                  prompt: Text("비우면 미분류"))
+                            .textFieldStyle(.roundedBorder)
+                            .focused($focus, equals: .category)
+                            .onSubmit { focus = .name }
+                        if !model.categories.isEmpty {
+                            Menu {
+                                ForEach(model.categories, id: \.self) { c in
+                                    Button(c) { category = c; dirty = true }
+                                }
+                            } label: { Image(systemName: "chevron.down") }
+                                .menuStyle(.borderlessButton)
+                                .menuIndicator(.hidden)
+                                .fixedSize()
+                                .help("기존 카테고리 고르기")
+                        }
+                    }
+                }
+                .frame(width: 200)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("이름").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    TextField("덱 이름", text: Binding(get: { name }, set: { if $0 != name { name = $0; dirty = true } }))
+                        .textFieldStyle(.roundedBorder)
+                        .focused($focus, equals: .name)
+                        .onSubmit { if let first = rows.rows.first { focus = .key(first.id) } }
+                }
             }
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
@@ -160,6 +185,14 @@ struct DeckEditorView: View {
         }
         .confirmationDialog("저장하지 않은 변경이 있어요. 닫을까요?", isPresented: $confirmDiscard) {
             Button("저장하지 않고 닫기", role: .destructive) { dismiss() }
+        }
+    }
+
+    private var title: String {
+        switch target {
+        case .new: return "새 덱"
+        case .deck: return "덱 편집"
+        case .draft: return "PDF에서 만든 덱"
         }
     }
 
@@ -398,9 +431,21 @@ struct DeckEditorView: View {
     // MARK: Load, save, close
 
     private func load() {
-        if let id = deckID, let deck = model.decks.first(where: { $0.id == id }) {
-            name = deck.name
-            rows = EditorRows(cards: deck.cards)
+        switch target {
+        case .deck(let id):
+            if let deck = model.decks.first(where: { $0.id == id }) {
+                name = deck.name
+                category = deck.category
+                rows = EditorRows(cards: deck.cards)
+            }
+        case .new:
+            category = model.selectedDeck?.category ?? ""
+        case .draft(let draft):
+            name = draft.name
+            category = draft.category
+            rows = EditorRows(cards: draft.cards)
+            note = draft.note
+            dirty = true
         }
         DispatchQueue.main.async {
             focus = deckID == nil ? .name : .key(rows.rows[rows.rows.count - 1].id)
@@ -414,7 +459,7 @@ struct DeckEditorView: View {
             focus = row.q.trimmingCharacters(in: .whitespaces).isEmpty ? .key(row.id) : .value(row.id)
             return
         }
-        model.upsert(id: deckID, name: name, cards: currentCards)
+        model.upsert(id: deckID, name: name, category: category, cards: currentCards)
         dismiss()
     }
 

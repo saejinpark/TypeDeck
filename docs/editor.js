@@ -38,6 +38,14 @@ export function setupEditor() {
     }
   });
   $('#editorName').addEventListener('input', () => { dirty = true; });
+  $('#editorCategory').addEventListener('input', () => { dirty = true; });
+  $('#editorCategory').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !composingKey(e)) {
+      e.preventDefault();
+      if (e.metaKey || e.ctrlKey) return save();
+      $('#editorName').focus();
+    }
+  });
   $('#editorCards').addEventListener('input', () => { dirty = true; updateCount(); });
   $('#editorCards').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
@@ -55,8 +63,14 @@ export function setupEditor() {
   });
 }
 
-/** deck: { name, cards } or null for a new deck. */
+/** deck: { name, category, cards } or null for a new deck. */
 export function openEditor(deck, handlers) {
+  $('#categoryList').replaceChildren(...(handlers.categories ?? []).map((c) => {
+    const o = document.createElement('option');
+    o.value = c;
+    return o;
+  }));
+  $('#editorCategory').value = deck ? deck.category ?? '' : handlers.defaultCategory ?? '';
   onSave = handlers.onSave;
   onDelete = handlers.onDelete;
   dirty = false;
@@ -269,7 +283,7 @@ function save() {
       return;
     }
   }
-  onSave?.({ name: $('#editorName').value.trim(), cards: currentCards() });
+  onSave?.({ name: $('#editorName').value.trim(), category: $('#editorCategory').value.trim(), cards: currentCards() });
   dirty = false;
   closeEditor();
 }

@@ -33,6 +33,7 @@
           <div class="segmented" role="radiogroup" aria-label="연습 방식">
             <button class="keep-focus" type="button" role="radio" data-mode="copy">따라치기</button>
             <button class="keep-focus" type="button" role="radio" data-mode="recall">외워치기</button>
+            <button class="keep-focus" type="button" role="radio" data-mode="choice">5지선다</button>
           </div>
           <button class="toggle keep-focus" type="button" id="reverseBtn" aria-pressed="false" title="키와 값의 방향을 바꿉니다">⇄ 뒤집기</button>
           <button class="toggle keep-focus" type="button" id="shuffleBtn" aria-pressed="true" title="카드 순서를 섞습니다">섞기</button>
@@ -61,10 +62,17 @@
           <button type="button" role="radio" data-view="text">텍스트</button>
         </div>
       </div>
-      <label class="field">
-        <span>이름</span>
-        <input id="editorName" maxlength="60" autocomplete="off" placeholder="덱 이름">
-      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>카테고리</span>
+          <input id="editorCategory" maxlength="40" autocomplete="off" list="categoryList" placeholder="예: 토익 (비우면 미분류)">
+          <datalist id="categoryList"></datalist>
+        </label>
+        <label class="field grow">
+          <span>이름</span>
+          <input id="editorName" maxlength="60" autocomplete="off" placeholder="덱 이름">
+        </label>
+      </div>
       <div class="field">
         <div class="cards-head">
           <span>카드 <em id="editorCount">0장</em></span>

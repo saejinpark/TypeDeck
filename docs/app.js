@@ -1,4 +1,4 @@
-import { Session, InputTracker, diff, chars } from './core.js';
+import { Session, InputTracker, diff, chars, migrateDecks, groupDecks, SEED_VERSION, UNCATEGORIZED } from './core.js';
 import { setupEditor, openEditor as openDeckEditor, closeEditor } from './editor.js';
 
 const STORE_KEY = 'typedeck.v1';
@@ -11,7 +11,9 @@ const el = (tag, cls, text) => {
 };
 
 let seed = [];
-let store = { decks: [], settings: { deckId: null, mode: 'copy', reverse: false, shuffle: true } };
+let store = { decks: [], seedVersion: SEED_VERSION, settings: { deckId: null, mode: 'copy', reverse: false, shuffle: true, collapsed: [] } };
+const CHOICES = 5;
+const isChoice = () => store.settings.mode === 'choice';
 let session = null;
 let sessionCards = [];
 let sink = null;
@@ -27,7 +29,7 @@ function save() {
 function loadSaved() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY) ?? 'null'); } catch { return null; }
 }
-const cloneDeck = (d) => ({ id: d.id, name: d.name, cards: d.cards.map((c) => [c[0], c[1]]) });
+const cloneDeck = (d) => ({ id: d.id, name: d.name, category: d.category ?? '', cards: d.cards.map((c) => [c[0], c[1]]) });
 const currentDeck = () => store.decks.find((d) => d.id === store.settings.deckId) ?? null;
 
 /* ---------- input sink ----------
@@ -73,7 +75,7 @@ function compactInput(e) {
 }
 
 function onSinkInput(e) {
-  if (!session || session.finished) {
+  if (!session || session.finished || isChoice()) {
     if (!composing && e.type === 'input') { sink.value = ''; tracker.reset(); }
     return;
   }
@@ -99,6 +101,12 @@ function onSinkKeyDown(e) {
   if (handleCommandKey(e)) return;
   if (session?.finished) {
     if (e.key.length === 1) e.preventDefault();
+    return;
+  }
+  if (isChoice()) {
+    const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+    if (m || e.key.length === 1) e.preventDefault();
+    if (m) pick(Number(m[1]) - 1);
     return;
   }
   if (e.key.length === 1 || e.key === 'Process' || e.keyCode === 229) {
@@ -135,6 +143,13 @@ function handleCommandKey(e) {
   return true;
 }
 
+function pick(i) {
+  if (!session || session.finished) return;
+  const r = session.choose(i, performance.now());
+  if (r === 'advance') showNext();
+  else if (r === 'wrong') { renderFront(); shake(); }
+}
+
 /* ---------- session ---------- */
 
 function startSession(onlyMissed = false) {
@@ -145,7 +160,8 @@ function startSession(onlyMissed = false) {
     sessionCards = deck ? deck.cards : [];
   }
   const { shuffle, reverse } = store.settings;
-  session = sessionCards.length ? new Session(sessionCards, { shuffle, reverse }) : null;
+  const choices = isChoice() ? CHOICES : 0;
+  session = sessionCards.length ? new Session(sessionCards, { shuffle, reverse, choices }) : null;
   clearInput();
   focusSink();
   renderStack();
@@ -173,11 +189,25 @@ function renderStack() {
 function frontCard() {
   const card = el('article', 'card front');
   const meta = el('div', 'card-meta');
-  meta.append(el('span', 'pill', store.settings.reverse ? '값' : '키'), el('span', 'card-count'));
+  const label = isChoice() ? '문제' : store.settings.reverse ? '값' : '키';
+  meta.append(el('span', 'pill', label), el('span', 'card-count'));
   const q = el('div', 'q', session.current.q);
-  const wrap = el('div', 'answer-wrap');
-  wrap.append(el('div', 'answer'));
-  card.append(meta, q, wrap);
+  if (isChoice()) {
+    card.classList.add('choice-card');
+    const list = el('div', 'choices');
+    session.choices.forEach((text, i) => {
+      const b = el('button', 'choice keep-focus');
+      b.type = 'button';
+      b.append(el('kbd', '', String(i + 1)), el('span', '', text));
+      b.addEventListener('click', () => pick(i));
+      list.append(b);
+    });
+    card.append(meta, q, list);
+  } else {
+    const wrap = el('div', 'answer-wrap');
+    wrap.append(el('div', 'answer'));
+    card.append(meta, q, wrap);
+  }
   fillFront(card);
   return card;
 }
@@ -191,11 +221,19 @@ function fillFront(card) {
   const pill = card.querySelector('.pill');
   if (session.revealed) { pill.textContent = '정답 공개'; pill.classList.add('reveal'); }
   card.querySelector('.card-count').textContent = `남은 카드 ${session.remaining}`;
+  if (isChoice()) {
+    const showRight = session.revealed || session.wrongPicks.size > 0;
+    card.querySelectorAll('.choice').forEach((b, i) => {
+      b.classList.toggle('wrong', session.wrongPicks.has(i));
+      b.classList.toggle('right', showRight && i === session.answerIndex);
+    });
+    return;
+  }
   renderAnswer(card);
 }
 
 function renderAnswer(card = stackEl().querySelector('.card.front')) {
-  if (!card || !session?.current) return;
+  if (!card || !session?.current || isChoice()) return;
   const answer = card.querySelector('.answer');
   const { a } = session.current;
   const typed = session.typed;
@@ -310,7 +348,7 @@ function renderStatus() {
   for (const [k, v] of [
     ['진행', `${Math.min(session.pos + 1, total)}/${total}`],
     ['정확도', pct(session.accuracy)],
-    ['타/분', num(session.kpm)],
+    isChoice() ? ['남음', String(session.remaining)] : ['타/분', num(session.kpm)],
     ['연속', String(session.streak)],
   ]) {
     const cell = el('div');
@@ -319,19 +357,36 @@ function renderStatus() {
   }
   $('#hints').innerHTML = session.finished
     ? `<kbd>Enter</kbd>다시 하기${session.missed.length ? ' &nbsp; <kbd>Tab</kbd>틀린 카드만' : ''}`
-    : '<kbd>Enter</kbd>정답 보기 &nbsp; <kbd>Tab</kbd>건너뛰기 &nbsp; <kbd>Esc</kbd>지우기';
+    : isChoice()
+      ? `<kbd>1</kbd>–<kbd>${session.choices.length}</kbd>고르기 &nbsp; <kbd>Enter</kbd>정답 보기 &nbsp; <kbd>Tab</kbd>건너뛰기`
+      : '<kbd>Enter</kbd>정답 보기 &nbsp; <kbd>Tab</kbd>건너뛰기 &nbsp; <kbd>Esc</kbd>지우기';
 }
 
 function renderDeckList() {
   const list = $('#deckList');
   list.replaceChildren();
-  for (const deck of store.decks) {
-    const b = el('button', 'deck-item keep-focus');
-    b.type = 'button';
-    b.setAttribute('aria-current', String(deck.id === store.settings.deckId));
-    b.append(el('span', '', deck.name), el('span', 'count', String(deck.cards.length)));
-    b.addEventListener('click', () => selectDeck(deck.id));
-    list.append(b);
+  const collapsed = new Set(store.settings.collapsed ?? []);
+  for (const group of groupDecks(store.decks)) {
+    const key = group.category;
+    const isOpen = !collapsed.has(key);
+    const section = el('div', 'deck-group');
+    const head = el('button', 'group-head keep-focus');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', String(isOpen));
+    head.append(el('span', 'chev', '›'), el('span', 'group-name', key || UNCATEGORIZED), el('span', 'count', String(group.decks.length)));
+    head.addEventListener('click', () => toggleGroup(key));
+    section.append(head);
+    if (isOpen) {
+      for (const deck of group.decks) {
+        const b = el('button', 'deck-item keep-focus');
+        b.type = 'button';
+        b.setAttribute('aria-current', String(deck.id === store.settings.deckId));
+        b.append(el('span', '', deck.name), el('span', 'count', String(deck.cards.length)));
+        b.addEventListener('click', () => selectDeck(deck.id));
+        section.append(b);
+      }
+    }
+    list.append(section);
   }
   const deck = currentDeck();
   $('#deckName').textContent = deck ? deck.name : 'TypeDeck';
@@ -339,11 +394,22 @@ function renderDeckList() {
   document.title = deck ? `${deck.name} · TypeDeck` : 'TypeDeck';
 }
 
+function toggleGroup(key) {
+  const set = new Set(store.settings.collapsed ?? []);
+  if (set.has(key)) set.delete(key); else set.add(key);
+  store.settings.collapsed = [...set];
+  save();
+  renderDeckList();
+}
+
 function renderControls() {
   for (const b of document.querySelectorAll('.segmented button')) {
     b.setAttribute('aria-checked', String(b.dataset.mode === store.settings.mode));
   }
-  $('#reverseBtn').setAttribute('aria-pressed', String(store.settings.reverse));
+  $('#reverseBtn').setAttribute('aria-pressed', String(store.settings.reverse && !isChoice()));
+  $('#reverseBtn').disabled = isChoice();
+  $('#arena').classList.toggle('choice-mode', isChoice());
+  $('#reverseBtn').title = isChoice() ? '5지선다에서는 방향을 바꾸지 않아요' : '키와 값의 방향을 바꿉니다';
   $('#shuffleBtn').setAttribute('aria-pressed', String(store.settings.shuffle));
 }
 
@@ -367,20 +433,25 @@ function note(text) {
 
 function openEditor(id) {
   const deck = id ? store.decks.find((d) => d.id === id) : null;
+  const categories = groupDecks(store.decks).map((g) => g.category).filter(Boolean);
+  const defaultCategory = deck ? deck.category ?? '' : currentDeck()?.category ?? '';
   openDeckEditor(deck, {
-    onSave: ({ name, cards }) => saveDeck(id, name, cards),
+    categories,
+    defaultCategory,
+    onSave: ({ name, category, cards }) => saveDeck(id, name, category, cards),
     onDelete: () => deleteDeck(id),
   });
 }
 
-function saveDeck(id, name, cards) {
+function saveDeck(id, name, category, cards) {
   const deck = id ? store.decks.find((d) => d.id === id) : null;
   if (deck) {
     deck.name = name || deck.name;
+    deck.category = category;
     deck.cards = cards;
   } else {
     const newId = `d${Date.now().toString(36)}`;
-    store.decks.push({ id: newId, name: name || '새 덱', cards });
+    store.decks.push({ id: newId, name: name || '새 덱', category, cards });
     store.settings.deckId = newId;
   }
   save();
@@ -423,10 +494,12 @@ function bindUI() {
 
   for (const b of document.querySelectorAll('.segmented button')) {
     b.addEventListener('click', () => {
+      const before = store.settings.mode;
       store.settings.mode = b.dataset.mode;
       save();
       renderControls();
-      renderFront();
+      if (before === 'choice' || store.settings.mode === 'choice') startSession();
+      else renderFront();
     });
   }
   $('#reverseBtn').addEventListener('click', () => {
@@ -459,10 +532,15 @@ async function boot() {
   } catch { seed = []; }
   const saved = loadSaved();
   if (saved && Array.isArray(saved.decks)) {
-    store = { decks: saved.decks, settings: { ...store.settings, ...saved.settings } };
+    store = {
+      decks: migrateDecks(saved.decks, saved.seedVersion, seed),
+      seedVersion: SEED_VERSION,
+      settings: { ...store.settings, ...saved.settings },
+    };
   } else {
     store.decks = seed.map(cloneDeck);
   }
+  save();
   if (!currentDeck()) store.settings.deckId = store.decks[0]?.id ?? null;
   setupSink();
   bindUI();

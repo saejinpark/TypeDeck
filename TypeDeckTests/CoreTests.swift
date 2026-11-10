@@ -138,3 +138,64 @@ struct EditorRowsTests {
         #expect(rows.rows.count == 2)
     }
 }
+
+struct ChoiceAndSeedTests {
+    @Test func multipleChoiceOffersAnswerAndDistinctDistractors() {
+        let cards = (0..<8).map { Card("w\($0)", "m\($0)") }
+        let s = Session(cards: cards, shuffle: false, reverse: true, choices: 5)
+        #expect(s.current?.q == "w0", "reverse is ignored in multiple choice")
+        #expect(s.choices.count == 5)
+        #expect(Set(s.choices).count == 5)
+        #expect(s.choices.contains("m0"))
+        let wrong = s.choices.firstIndex { $0 != "m0" }!
+        #expect(s.choose(wrong, at: 0) == .wrong)
+        #expect(s.wrongPicks.contains(wrong))
+        #expect(s.choose(s.answerIndex!, at: 1) == .advance)
+        #expect(s.current?.q == "w1")
+        #expect(s.choices.count == 5)
+        #expect(s.missed.count == 1)
+        #expect(s.queue.count == 9)
+    }
+
+    @Test func smallDeckUsesWhatItHas() {
+        let s = Session(cards: [Card("a", "1"), Card("b", "2"), Card("c", "2")], shuffle: false, choices: 5)
+        #expect(s.choices.sorted() == ["1", "2"])
+        #expect(s.choose(9, at: 0) == .none)
+    }
+
+    @Test func migrationReplacesRetiredDecksOnce() {
+        let seed = [Deck(id: "toeic-1", name: "T", category: "토익", cards: [Card("a", "1")])]
+        let old = [Deck(id: "proverbs", name: "P", cards: []), Deck(id: "mine", name: "M", cards: [Card("x", "y")])]
+        let next = Seed.migrate(old, from: 1, seed: seed)
+        #expect(next.map(\.id) == ["toeic-1", "mine"])
+        #expect(Seed.migrate(next, from: Seed.version, seed: seed) == next)
+    }
+
+    @Test func groupingKeepsOrderAndPutsUncategorizedLast() {
+        let decks = [Deck(id: "1", name: "", category: "토플", cards: []), Deck(id: "2", name: "", cards: []),
+                     Deck(id: "3", name: "", category: "토익", cards: []), Deck(id: "4", name: "", category: "토플", cards: [])]
+        let g = Seed.group(decks)
+        #expect(g.map(\.category) == ["토플", "토익", ""])
+        #expect(g[0].decks.map(\.id) == ["1", "4"])
+    }
+
+    @Test func decksWithoutCategoryStillDecode() throws {
+        let json = #"{"version":1,"decks":[{"id":"a","name":"A","cards":[["k","v"]]}]}"#
+        let file = try JSONDecoder().decode(DeckFile.self, from: Data(json.utf8))
+        #expect(file.decks[0].category == "")
+    }
+}
+
+struct PDFChunkTests {
+    @Test func chunksRespectTheLimitAndKeepEveryLine() {
+        let lines = (1...40).map { "word\($0) - 뜻\($0)" }
+        let chunks = PDFTextExtractor.chunks(lines.joined(separator: "\n"), limit: 100)
+        #expect(chunks.allSatisfy { $0.count <= 100 })
+        #expect(chunks.joined(separator: "\n").components(separatedBy: "\n") == lines)
+    }
+
+    @Test func veryLongLinesAreCut() {
+        let chunks = PDFTextExtractor.chunks(String(repeating: "가", count: 250), limit: 100)
+        #expect(chunks.map(\.count) == [100, 100, 50])
+    }
+}
