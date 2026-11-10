@@ -87,3 +87,54 @@ test('feed does not carry over while an IME is still composing', () => {
   assert.deepEqual(s.feed('서울도', true, 0), { advanced: 0, rest: '서울도' });
   assert.equal(s.current.a, '서울');
 });
+
+import { InputTracker, absorbedJamo } from '../docs/core.js';
+
+test('absorbedJamo finds the consonant the IME attached to the previous syllable', () => {
+  assert.equal(absorbedJamo('다', '닥'), 'ㄱ');
+  assert.equal(absorbedJamo('울', '욹'), 'ㄱ');
+  assert.equal(absorbedJamo('다', '도'), null);
+  assert.equal(absorbedJamo('다', '다'), null);
+  assert.equal(absorbedJamo('a', 'b'), null);
+});
+
+test('tracker: card finished mid-composition, next card typed into the same input', () => {
+  const t = new InputTracker();
+  // "곱다" finished while 다 is still composing
+  t.consume('곱다', '다');
+  assert.equal(t.segment('곱다'), '');
+  assert.equal(t.segment('곱닥'), 'ㄱ', 'the next consonant shows on the new card');
+  assert.equal(t.segment('곱다가'), '가', 'the IME split the syllable');
+  assert.equal(t.segment('곱다각'), '각');
+});
+
+test('tracker: typo on the new card can be deleted down to nothing', () => {
+  const t = new InputTracker();
+  t.consume('서울', '울');
+  assert.equal(t.segment('서욹'), 'ㄱ');    // typo absorbed into 울
+  assert.equal(t.segment('서울'), '');      // Backspace removes it
+  assert.equal(t.segment('서우'), '');      // extra Backspace eats the old syllable, still nothing new
+  assert.equal(t.segment('서'), '');
+  assert.equal(t.segment(''), '');
+  assert.equal(t.segment('ㄷ'), 'ㄷ');
+});
+
+test('tracker: typo after the carry has settled', () => {
+  const t = new InputTracker();
+  t.consume('서울', '울');
+  assert.equal(t.segment('서울도'), '도');
+  assert.equal(t.segment('서울도ㅋ'), '도ㅋ');
+  assert.equal(t.segment('서울도'), '도');
+  assert.equal(t.segment('서울ㄷ'), 'ㄷ');
+  assert.equal(t.segment('서울'), '');
+  assert.equal(t.segment('서우'), '', 'deleting into the old card shows nothing');
+});
+
+test('tracker: committed overflow and plain resets', () => {
+  const t = new InputTracker();
+  t.consume('OKFo', '', 'Fo');
+  assert.equal(t.segment('OKFo'), 'Fo');
+  assert.equal(t.segment('OKF'), 'F');
+  t.reset();
+  assert.equal(t.segment('abc'), 'abc');
+});

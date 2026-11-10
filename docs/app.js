@@ -1,4 +1,4 @@
-import { Session, diff, parseCards, serializeCards, chars } from './core.js';
+import { Session, InputTracker, diff, parseCards, serializeCards, chars } from './core.js';
 
 const STORE_KEY = 'typedeck.v1';
 const $ = (sel) => document.querySelector(sel);
@@ -13,8 +13,10 @@ let seed = [];
 let store = { decks: [], settings: { deckId: null, mode: 'copy', reverse: false, shuffle: true } };
 let session = null;
 let sessionCards = [];
-let sinks = [];
-let active = null;
+let sink = null;
+const tracker = new InputTracker();
+let composing = false;
+let compositionText = '';
 let editingId = null;
 
 /* ---------- storage ---------- */
@@ -28,55 +30,72 @@ function loadSaved() {
 const cloneDeck = (d) => ({ id: d.id, name: d.name, cards: d.cards.map((c) => [c[0], c[1]]) });
 const currentDeck = () => store.decks.find((d) => d.id === store.settings.deckId) ?? null;
 
-/* ---------- input sinks ----------
-   Two hidden inputs take turns. When a card is finished we move focus to the other one,
-   which ends any IME composition in the old input, so nothing leaks into the next card. */
+/* ---------- input sink ----------
+   One hidden input keeps focus the whole time. While an IME is composing we never change its
+   value or focus (Chrome on macOS re-inserts the syllable and swallows the next Backspace if we
+   do); the tracker remembers where the current card's text starts instead. */
 
-function setupSinks() {
-  sinks = [$('#sinkA'), $('#sinkB')];
-  active = sinks[0];
-  for (const s of sinks) {
-    s.addEventListener('keydown', onSinkKeyDown);
-    s.addEventListener('input', onSinkInput);
-    s.addEventListener('compositionend', onSinkInput);
-    s.addEventListener('focus', () => $('#arena').classList.add('focused'));
-    s.addEventListener('blur', () => requestAnimationFrame(() => {
-      if (!sinks.includes(document.activeElement)) $('#arena').classList.remove('focused');
-    }));
-  }
+function setupSink() {
+  sink = $('#sink');
+  sink.addEventListener('keydown', onSinkKeyDown);
+  sink.addEventListener('input', onSinkInput);
+  sink.addEventListener('compositionstart', () => { composing = true; compositionText = ''; });
+  sink.addEventListener('compositionupdate', (e) => { compositionText = e.data ?? ''; });
+  sink.addEventListener('compositionend', (e) => {
+    composing = false;
+    compositionText = '';
+    onSinkInput(e);
+  });
+  sink.addEventListener('focus', () => $('#arena').classList.add('focused'));
+  sink.addEventListener('blur', () => $('#arena').classList.remove('focused'));
 }
 
 function focusSink() {
-  if (!$('#editor').open) active.focus({ preventScroll: true });
+  if (!$('#editor').open && document.activeElement !== sink) sink.focus({ preventScroll: true });
 }
 
-function swapSink() {
-  const old = active;
-  active = old === sinks[0] ? sinks[1] : sinks[0];
-  active.value = '';
-  active.tabIndex = 0;
-  old.tabIndex = -1;
-  active.focus({ preventScroll: true });
-  old.value = '';
+/** Starts the next card's text from scratch. Safe to call at any time. */
+function clearInput() {
+  if (composing) {
+    const carry = compositionText || chars(sink.value).slice(-1).join('');
+    tracker.consume(sink.value, carry);
+  } else {
+    sink.value = '';
+    tracker.reset();
+  }
+}
+
+/** Drops text that belongs to finished cards, but only when no composition is in progress. */
+function compactInput(e) {
+  if (e.type !== 'input' || e.isComposing || composing || tracker.carry || tracker.base === 0) return;
+  sink.value = tracker.segment(sink.value);
+  tracker.reset();
 }
 
 function onSinkInput(e) {
-  const target = e.currentTarget;
-  if (target !== active) { target.value = ''; return; }
-  if (!session || session.finished) { target.value = ''; return; }
-  const composing = e.type === 'compositionend' ? false : Boolean(e.isComposing);
-  const { advanced, rest } = session.feed(target.value, composing, performance.now());
+  if (!session || session.finished) {
+    if (!composing && e.type === 'input') { sink.value = ''; tracker.reset(); }
+    return;
+  }
+  const isComposing = e.type === 'compositionend' ? false : Boolean(e.isComposing || composing);
+  const text = tracker.segment(sink.value);
+  const { advanced, rest } = session.feed(text, isComposing, performance.now());
   if (advanced) {
-    swapSink();
-    active.value = rest;
+    if (isComposing) {
+      tracker.consume(sink.value, compositionText || chars(sink.value).slice(-1).join(''));
+    } else {
+      tracker.consume(sink.value, '', rest);
+    }
+    compactInput(e);
     showNext();
   } else {
+    compactInput(e);
     renderAnswer();
   }
 }
 
 function onSinkKeyDown(e) {
-  if (e.currentTarget !== active || e.metaKey || e.ctrlKey) return;
+  if (e.metaKey || e.ctrlKey) return;
   if (handleCommandKey(e)) return;
   if (session?.finished) {
     if (e.key.length === 1) e.preventDefault();
@@ -106,10 +125,10 @@ function handleCommandKey(e) {
     else if (r === 'shake') shake();
   } else if (key === 'Tab') {
     session.skip(now);
-    swapSink();
+    clearInput();
     showNext();
   } else {
-    swapSink();
+    clearInput();
     session.input('', false, now);
     renderAnswer();
   }
@@ -127,7 +146,8 @@ function startSession(onlyMissed = false) {
   }
   const { shuffle, reverse } = store.settings;
   session = sessionCards.length ? new Session(sessionCards, { shuffle, reverse }) : null;
-  swapSink();
+  clearInput();
+  focusSink();
   renderStack();
 }
 
@@ -403,7 +423,7 @@ function bindUI() {
 
   // Typing anywhere goes to the card.
   document.addEventListener('keydown', (e) => {
-    if ($('#editor').open || sinks.includes(document.activeElement)) return;
+    if ($('#editor').open || document.activeElement === sink) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const tag = document.activeElement?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -457,7 +477,7 @@ async function boot() {
     store.decks = seed.map(cloneDeck);
   }
   if (!currentDeck()) store.settings.deckId = store.decks[0]?.id ?? null;
-  setupSinks();
+  setupSink();
   bindUI();
   renderDeckList();
   renderControls();

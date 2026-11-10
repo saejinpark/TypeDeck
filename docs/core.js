@@ -191,3 +191,92 @@ export class Session {
     return (this.keystrokes / this.activeMs) * 60000;
   }
 }
+
+/* ---------- IME-safe input tracking ----------
+   Chrome on macOS misbehaves when an input's value or focus changes while a Hangul syllable is
+   still being composed: the syllable is re-inserted later and the first Backspace goes to that
+   ghost composition. So the web app never touches the input during composition. Instead the
+   input keeps everything typed, and this tracker remembers where the current card starts. */
+
+const HANGUL_BASE = 0xac00;
+const HANGUL_LAST = 0xd7a3;
+// Final consonant index (1-27) -> compatibility jamo.
+const FINALS = [null, ...'ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ'];
+// Compound final -> [first, second] final indices.
+const COMPOUND_FINALS = { 3: [1, 19], 5: [4, 22], 6: [4, 27], 9: [8, 1], 10: [8, 16], 11: [8, 17], 12: [8, 19], 13: [8, 25], 14: [8, 26], 15: [8, 27], 18: [17, 19] };
+
+function syllable(ch) {
+  const code = ch?.codePointAt(0);
+  if (code === undefined || code < HANGUL_BASE || code > HANGUL_LAST) return null;
+  const s = code - HANGUL_BASE;
+  return { lv: Math.floor(s / 28), t: s % 28 };
+}
+
+/**
+ * When the previous card ended on a syllable still being composed, the next consonant can be
+ * absorbed into it as a final ("다" + ㄱ -> "닥"). Returns the absorbed jamo ("ㄱ"), or null when
+ * `next` is not `prev` with one more consonant.
+ */
+export function absorbedJamo(prev, next) {
+  const p = syllable(prev);
+  const n = syllable(next);
+  if (!p || !n || p.lv !== n.lv || p.t === n.t) return null;
+  if (p.t === 0) return FINALS[n.t];
+  const parts = COMPOUND_FINALS[n.t];
+  return parts && parts[0] === p.t ? FINALS[parts[1]] : null;
+}
+
+export class InputTracker {
+  constructor() { this.reset(); }
+
+  reset() {
+    this.base = 0; // index (in characters) where the current card's text starts
+    this.carry = ''; // previous card's syllable that may still be under composition
+  }
+
+  /** The part of the input that belongs to the current card. */
+  segment(value) {
+    const chs = chars(normalize(value));
+    if (chs.length <= this.base) {
+      // Backspace reached text that belonged to an earlier card.
+      this.base = chs.length;
+      this.carry = '';
+      return '';
+    }
+    let rest = chs.slice(this.base);
+    if (this.carry) {
+      const c = chars(this.carry);
+      const startsWithCarry = c.every((ch, i) => rest[i] === ch);
+      if (startsWithCarry) {
+        if (rest.length === c.length) return '';
+        // The composition moved past the carried syllable; it is settled now.
+        this.base += c.length;
+        this.carry = '';
+        rest = rest.slice(c.length);
+      } else if (c.length === 1) {
+        const jamo = absorbedJamo(c[0], rest[0]);
+        if (jamo) return jamo + rest.slice(1).join('');
+        if (absorbedJamo(rest[0], c[0]) || rest.length === 1) {
+          // Backspace is taking the carried syllable apart; it is not the new card's text.
+          this.carry = rest[0];
+          if (rest.length === 1) return '';
+        }
+        this.carry = '';
+      } else {
+        this.carry = '';
+      }
+    }
+    return rest.join('');
+  }
+
+  /**
+   * The current card is done. `carry` is the text still being composed (may be empty);
+   * `rest` is overflow that already belongs to the next card.
+   */
+  consume(value, carry = '', rest = '') {
+    const len = chars(normalize(value)).length;
+    const carryLen = chars(normalize(carry)).length;
+    this.base = Math.max(0, len - chars(rest).length - carryLen);
+    this.carry = carryLen ? normalize(carry) : '';
+  }
+}
