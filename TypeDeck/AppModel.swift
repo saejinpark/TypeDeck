@@ -22,9 +22,9 @@ struct DeckDraft: Hashable {
     var note: String
 }
 
-/// The built-in deck picker: the welcome on first launch, or "토익 단어장 추가" later.
+/// The first-launch sheet that offers the TOEIC sample decks.
 enum DeckPickerMode: String, Identifiable {
-    case welcome, add
+    case welcome
     var id: String { rawValue }
 }
 
@@ -277,8 +277,6 @@ final class AppModel {
         }
     }
 
-    func isBuiltIn(_ deck: Deck) -> Bool { seed.contains { $0.id == deck.id } }
-
     /// Deletes a category and every deck in it ("" is the uncategorized group).
     func deleteCategory(_ category: String) {
         let ids = Set(decks.filter { $0.category.cleanedCategory == category }.map(\.id))
@@ -292,22 +290,17 @@ final class AppModel {
         }
     }
 
-    /// Adds the missing built-in decks of `categories`. On the welcome sheet this also finishes
-    /// the first launch, even when nothing was chosen. Returns how many decks were added.
+    /// Finishes the first launch with the chosen sample categories (none means start empty).
+    /// The samples are only offered here. Returns how many decks were added.
     @discardableResult
-    func addBuiltIn(categories: Set<String>, firstRun: Bool) -> Int {
-        let add = Seed.categories(seed: seed, decks: decks).filter { categories.contains($0.category) }.flatMap(\.missing)
+    func finishWelcome(sampleCategories: Set<String>) -> Int {
+        let add = Seed.categories(seed: seed, decks: decks).filter { sampleCategories.contains($0.category) }.flatMap(\.missing)
         decks = Seed.adding(add, to: decks, seed: seed)
         save()
-        if firstRun {
-            defaults.set(Seed.version, forKey: Keys.seedVersion)
-            selectedDeckID = nil
-            select(decks.first?.id)
-            collapsedCategories = Seed.collapsed(except: selectedDeckID, in: decks)
-        } else {
-            for c in Set(add.map { $0.category.cleanedCategory }) { collapsedCategories.remove(c) }
-            if selectedDeck == nil { select(add.first?.id ?? decks.first?.id) }
-        }
+        defaults.set(Seed.version, forKey: Keys.seedVersion)
+        selectedDeckID = nil
+        select(decks.first?.id)
+        collapsedCategories = Seed.collapsed(except: selectedDeckID, in: decks)
         deckPicker = nil
         refocus()
         return add.count

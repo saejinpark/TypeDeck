@@ -57,7 +57,7 @@ struct ContentView: View {
         ) { deck in
             Button("삭제", role: .destructive) { model.delete(deck.id); model.refocus() }
         } message: { deck in
-            Text(model.isBuiltIn(deck) ? Self.comeBack : "되돌릴 수 없어요.")
+            Text("되돌릴 수 없어요.")
         }
         .confirmationDialog(
             categoryDeleteTitle,
@@ -71,12 +71,10 @@ struct ContentView: View {
             if list.isEmpty {
                 Text("덱이 없는 카테고리예요.")
             } else {
-                Text(list.allSatisfy(model.isBuiltIn) ? Self.comeBack : "되돌릴 수 없어요.")
+                Text("되돌릴 수 없어요.")
             }
         }
     }
-
-    private static let comeBack = "토익 단어장 덱이라 사이드바 아래 '토익 단어장 추가'에서 다시 넣을 수 있어요."
 
     private var categoryDeleteTitle: String {
         guard let c = pendingCategory else { return "" }
@@ -169,12 +167,12 @@ struct ContentView: View {
             if let deck = model.selectedDeck { pendingDelete = deck }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if model.groups.count > 1 {
-                HStack {
-                    Text("덱")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
+            HStack(spacing: 8) {
+                Text("덱")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if model.groups.count > 1 {
                     Button(model.allCategoriesCollapsed ? "모두 펼치기" : "모두 접기") {
                         withAnimation(.easeOut(duration: 0.15)) {
                             model.setAllCategories(open: model.allCategoriesCollapsed)
@@ -184,42 +182,25 @@ struct ContentView: View {
                     .font(.caption)
                     .help("모든 카테고리를 한 번에 접거나 펼칩니다 (⌥⌘← / ⌥⌘→)")
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-            }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Button {
-                        model.categoryPrompt = .new
-                    } label: {
-                        Label("새 카테고리", systemImage: "folder.badge.plus")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .help("공부할 주제마다 카테고리를 만드세요 (⇧⌘N)")
-                    Button {
-                        model.editorTarget = .new
-                    } label: {
-                        Label("새 덱", systemImage: "plus")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .help("지금 카테고리에 새 덱을 만듭니다 (⌘N)")
-                }
-                .controlSize(.large)
-                Button {
-                    model.startImport(into: nil)
+                Menu {
+                    Button("새 덱") { model.editorTarget = .new }
+                    Button("새 카테고리…") { model.categoryPrompt = .new }
+                    Button("자료로 덱 만들기…") { model.startImport(into: nil) }
                 } label: {
-                    Label("자료로 덱 만들기", systemImage: "doc.text.magnifyingglass")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .semibold))
                 }
-                .help("PDF는 Apple Intelligence가 카드를 만들고, 텍스트·CSV 파일은 줄마다 카드로 읽어요 (⇧⌘O)")
-                Button("토익 단어장 추가") { model.deckPicker = .add }
-                    .buttonStyle(.link)
-                    .font(.caption)
-                    .help("예시로 들어 있는 토익 영단어 덱을 골라서 넣습니다")
+                .menuStyle(.button)
+                .menuIndicator(.hidden)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .fixedSize()
+                .help("새 덱, 새 카테고리, 자료로 덱 만들기")
+                .accessibilityLabel("새로 만들기")
             }
-            .padding(12)
+            .padding(.leading, 14)
+            .padding(.trailing, 10)
+            .padding(.vertical, 6)
         }
     }
 }

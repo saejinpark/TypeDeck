@@ -358,12 +358,6 @@ function emptyCard() {
   deck.addEventListener('click', () => openEditor(null));
   buttons.append(cat, deck);
   card.append(buttons);
-  if (seed.length) {
-    const add = el('button', 'link-btn', '토익 단어장 넣기');
-    add.type = 'button';
-    add.addEventListener('click', () => openPicker(false));
-    card.append(add);
-  }
   return card;
 }
 
@@ -473,8 +467,29 @@ function rowActions(actions) {
   return box;
 }
 
-const isBuiltIn = (deck) => seed.some((s) => s.id === deck.id);
-const comeBackNote = '토익 단어장 덱이라 사이드바 아래 \'토익 단어장 추가\'에서 다시 넣을 수 있어요.';
+/* ---------- the + menu at the top of the sidebar ---------- */
+
+function setupAddMenu() {
+  const btn = $('#addMenuBtn');
+  const menu = $('#addMenu');
+  const close = () => { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = menu.hidden;
+    menu.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+  });
+  menu.addEventListener('click', (e) => {
+    const action = e.target.closest('[data-action]')?.dataset.action;
+    if (!action) return;
+    close();
+    if (action === 'deck') openEditor(null);
+    if (action === 'category') startNewCategory();
+    if (action === 'file') { openEditor(null); $('#editorFile').click(); }
+  });
+  document.addEventListener('click', (e) => { if (!menu.hidden && !e.target.closest('.add-menu')) close(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !menu.hidden) { close(); e.stopPropagation(); } }, true);
+}
 
 /* ---------- creating and renaming categories ---------- */
 
@@ -570,8 +585,7 @@ function deleteCategory(key) {
     removeDecks(new Set(), key);
     return;
   }
-  const tail = list.every(isBuiltIn) ? comeBackNote : '되돌릴 수 없어요.';
-  if (!confirm(`'${label}' 카테고리와 그 안의 덱 ${list.length}개를 모두 삭제할까요?\n${tail}`)) return;
+  if (!confirm(`'${label}' 카테고리와 그 안의 덱 ${list.length}개를 모두 삭제할까요?\n되돌릴 수 없어요.`)) return;
   removeDecks(new Set(list.map((d) => d.id)), key);
   note(`덱 ${list.length}개를 삭제했어요`);
 }
@@ -663,20 +677,17 @@ function saveDeck(id, name, category, cards) {
 function deleteDeck(id) {
   const deck = store.decks.find((d) => d.id === id);
   if (!deck) return;
-  const tail = isBuiltIn(deck) ? comeBackNote : '되돌릴 수 없어요.';
-  if (!confirm(`'${deck.name}' 덱을 삭제할까요?\n${tail}`)) return;
+  if (!confirm(`'${deck.name}' 덱을 삭제할까요?\n되돌릴 수 없어요.`)) return;
   removeDecks(new Set([id]));
 }
 
-/* ---------- built-in deck picker (first run and "토익 단어장 추가") ---------- */
+/* ---------- first run: optional TOEIC sample decks ---------- */
 
-function openPicker(firstRun) {
+function openWelcome() {
   const dlg = $('#picker');
   const cats = seedCategories(seed, store.decks);
-  $('#pickerTitle').textContent = firstRun ? 'TypeDeck에 오신 걸 환영해요' : '토익 단어장 추가';
-  $('#pickerLead').textContent = firstRun
-    ? '외울 것을 카드로 만들어 손으로 치면서 익혀요. 키를 보고 값을 치면 바로 다음 카드로 넘어가요. 자격증, 외국어, 용어처럼 공부할 주제마다 카테고리를 만들고 덱으로 정리하세요. 예시로 토익 영단어장을 넣어 둘까요? 필요 없으면 빈 상태로 시작해도 되고, 나중에 사이드바 아래 \'토익 단어장 추가\'에서 넣을 수 있어요.'
-    : '넣을 토익 단어장을 고르세요. 이미 있는 덱은 그대로 두고 빠진 덱만 넣어요.';
+  $('#pickerTitle').textContent = 'TypeDeck에 오신 걸 환영해요';
+  $('#pickerLead').textContent = '외울 것을 카드로 만들어 손으로 치면서 익혀요. 키를 보고 값을 치면 바로 다음 카드로 넘어가요. 자격증, 외국어, 용어처럼 공부할 주제마다 카테고리를 만들고 덱으로 정리하세요. 먼저 써 볼 수 있게 예시로 토익 영단어장을 넣어 둘까요?';
   const list = $('#pickerList');
   list.replaceChildren();
   for (const c of cats) {
@@ -684,51 +695,38 @@ function openPicker(firstRun) {
     const box = el('input');
     box.type = 'checkbox';
     box.value = c.category;
-    box.checked = c.missing.length > 0;
-    box.disabled = c.missing.length === 0;
+    box.checked = true;
     const text = el('span', 'picker-text');
     text.append(el('b', '', c.category || UNCATEGORIZED),
       el('small', '', `덱 ${c.decks.length}개 · ${c.words.toLocaleString('ko-KR')}단어`));
-    const state = c.missing.length === 0 ? '모두 있음' : c.missing.length < c.decks.length ? `${c.missing.length}개 빠짐` : '';
-    row.append(box, text, el('span', 'picker-state', state));
+    row.append(box, text);
     box.addEventListener('change', update);
     list.append(row);
   }
   const ok = $('#pickerOk');
-  const skip = $('#pickerSkip');
-  skip.textContent = firstRun ? '빈 상태로 시작' : '취소';
+  $('#pickerSkip').textContent = '빈 상태로 시작';
   function update() {
-    const n = list.querySelectorAll('input:checked').length;
-    ok.textContent = firstRun ? (n ? '선택한 덱으로 시작' : '빈 상태로 시작') : '추가';
-    ok.disabled = !firstRun && n === 0;
+    ok.textContent = list.querySelector('input:checked') ? '예시 넣고 시작' : '빈 상태로 시작';
   }
   update();
   ok.onclick = () => {
     const chosen = new Set([...list.querySelectorAll('input:checked')].map((b) => b.value));
-    const add = cats.filter((c) => chosen.has(c.category)).flatMap((c) => c.missing).map(cloneDeck);
     dlg.close();
-    applyPicked(add, firstRun);
+    finishWelcome(cats.filter((c) => chosen.has(c.category)).flatMap((c) => c.decks).map(cloneDeck));
   };
-  skip.onclick = () => { dlg.close(); if (firstRun) applyPicked([], true); };
+  $('#pickerSkip').onclick = () => { dlg.close(); finishWelcome([]); };
   // The first run has to end with a choice; Esc does not just dismiss it.
-  dlg.oncancel = (e) => { if (firstRun) e.preventDefault(); };
+  dlg.oncancel = (e) => e.preventDefault();
   dlg.showModal();
   ok.focus();
 }
 
-function applyPicked(add, firstRun) {
+function finishWelcome(add) {
   store.decks = addSeedDecks(store.decks, seed, add);
   store.categories = syncCategories(store.categories, store.decks);
-  if (firstRun) {
-    store.seedVersion = SEED_VERSION;
-    store.settings.deckId = store.decks[0]?.id ?? null;
-    store.settings.collapsed = collapsedExcept(store.decks, store.settings.deckId);
-  } else {
-    if (!currentDeck()) store.settings.deckId = add[0]?.id ?? store.decks[0]?.id ?? null;
-    const added = new Set(add.map((d) => (d.category ?? '').trim()));
-    store.settings.collapsed = (store.settings.collapsed ?? []).filter((c) => !added.has(c) || c === '');
-    if (add.length) note(`덱 ${add.length}개를 넣었어요`);
-  }
+  store.seedVersion = SEED_VERSION;
+  store.settings.deckId = store.decks[0]?.id ?? null;
+  store.settings.collapsed = collapsedExcept(store.decks, store.settings.deckId);
   save();
   renderDeckList();
   startSession();
@@ -775,11 +773,9 @@ function bindUI() {
     store.settings.shuffle = !store.settings.shuffle;
     save(); renderControls(); startSession();
   });
-  $('#newDeck').addEventListener('click', () => openEditor(null));
-  $('#newCategory').addEventListener('click', startNewCategory);
+  setupAddMenu();
   $('#toggleGroups').addEventListener('click', toggleAllGroups);
   $('#editDeck').addEventListener('click', () => openEditor(store.settings.deckId));
-  $('#restoreDecks').addEventListener('click', () => openPicker(false));
   $('#picker').addEventListener('close', () => setTimeout(focusSink, 0));
 
   setupEditor();
@@ -816,7 +812,7 @@ async function boot() {
   renderDeckList();
   renderControls();
   startSession();
-  if (firstRun) openPicker(true);
+  if (firstRun) openWelcome();
   else focusSink();
 }
 

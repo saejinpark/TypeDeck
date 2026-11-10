@@ -441,10 +441,6 @@ private struct EmptyCard: View {
                     Button("새 덱") { model.editorTarget = .new }
                     Button("자료로 덱 만들기") { model.startImport(into: nil) }
                 }
-                if !model.seed.isEmpty {
-                    Button("토익 단어장 넣기") { model.deckPicker = .add }
-                        .buttonStyle(.link)
-                }
             } else {
                 Text("이 덱에는 카드가 없어요.")
                     .foregroundStyle(Palette.muted)

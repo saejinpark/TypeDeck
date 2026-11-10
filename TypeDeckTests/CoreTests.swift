@@ -287,7 +287,7 @@ struct SidebarStateTests {
         let model = makeModel(seedVersion: nil, collapsed: nil, deck: nil)
         #expect(model.deckPicker == .welcome)
         #expect(model.decks.isEmpty)
-        let n = model.addBuiltIn(categories: ["토익 기초 (600+)", "토익 숙어"], firstRun: true)
+        let n = model.finishWelcome(sampleCategories: ["토익 기초 (600+)", "토익 숙어"])
         #expect(n == 32)
         #expect(model.deckPicker == nil)
         #expect(model.selectedDeckID == "toeic-basic-01")
@@ -296,20 +296,19 @@ struct SidebarStateTests {
 
     @Test func firstLaunchCanStartEmpty() {
         let model = makeModel(seedVersion: nil, collapsed: nil, deck: nil)
-        #expect(model.addBuiltIn(categories: [], firstRun: true) == 0)
+        #expect(model.finishWelcome(sampleCategories: []) == 0)
         #expect(model.decks.isEmpty)
         #expect(model.selectedDeckID == nil)
     }
 
-    @Test func deletingACategoryAndAddingItBack() {
+    @Test func deletingACategoryRemovesItsDecks() {
         let model = makeModel(seedVersion: nil, collapsed: nil, deck: nil)
-        model.addBuiltIn(categories: Set(Seed.group(model.seed).map(\.category)), firstRun: true)
+        model.finishWelcome(sampleCategories: Set(Seed.group(model.seed).map(\.category)))
         #expect(!model.decks.contains { $0.id.hasPrefix("toefl") })
         model.deleteCategory("토익 기초 (600+)")
         #expect(!model.decks.contains { $0.category == "토익 기초 (600+)" })
         #expect(model.selectedDeck?.category == "토익 중급 (800+)")
-        #expect(model.addBuiltIn(categories: ["토익 기초 (600+)"], firstRun: false) == 28)
-        #expect(model.decks.first?.id == "toeic-basic-01", "built-in decks keep the seed order")
+        #expect(model.decks.first?.id == "toeic-mid-01")
     }
 
     @Test func selectedDecksCategoryIsOpenedEvenIfSavedClosed() {
@@ -383,7 +382,7 @@ struct CategoryModelTests {
         let defaults = UserDefaults(suiteName: suite)!
         let store = FileManager.default.temporaryDirectory.appendingPathComponent("\(suite).json")
         let first = model(store: store, defaults: defaults)
-        first.addBuiltIn(categories: [], firstRun: true)
+        first.finishWelcome(sampleCategories: [])
         #expect(first.createCategory("정보처리기사") == nil)
         #expect(first.createCategory(" 정보처리기사 ") != nil, "duplicates are refused")
         #expect(first.createCategory(Seed.uncategorized) != nil)
@@ -405,7 +404,7 @@ struct CategoryModelTests {
         let defaults = UserDefaults(suiteName: suite)!
         let dir = FileManager.default.temporaryDirectory
         let m = model(store: dir.appendingPathComponent("\(suite).json"), defaults: defaults)
-        m.addBuiltIn(categories: [], firstRun: true)
+        m.finishWelcome(sampleCategories: [])
         m.createCategory("한국사")
         let file = dir.appendingPathComponent("\(suite) 조선 왕.csv")
         try "태조,이성계\n세종,\"이도, 한글 창제\"\n".write(to: file, atomically: true, encoding: .utf8)
