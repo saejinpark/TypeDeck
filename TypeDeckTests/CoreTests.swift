@@ -168,14 +168,17 @@ struct ChoiceAndSeedTests {
 
     @Test func migrationReplacesRetiredDecksOnce() {
         let seed = [Deck(id: "toeic-basic-01", name: "T", category: "토익", cards: [Card("a", "1")]),
-                    Deck(id: "toefl-1", name: "F", cards: [Card("b", "2")])]
+                    Deck(id: "toeic-mid-01", name: "U", cards: [Card("b", "2")])]
         let old = [Deck(id: "proverbs", name: "P", cards: []), Deck(id: "mine", name: "M", cards: [Card("x", "y")])]
         let next = Seed.migrate(old, from: 1, seed: seed)
-        #expect(next.map(\.id) == ["toeic-basic-01", "toefl-1", "mine"])
+        #expect(next.map(\.id) == ["toeic-basic-01", "toeic-mid-01", "mine"])
         #expect(Seed.migrate(next, from: Seed.version, seed: seed) == next)
-        let v2 = [Deck(id: "toeic-1", name: "old", cards: []), Deck(id: "toefl-1", name: "edited", cards: []),
+        let v2 = [Deck(id: "toeic-1", name: "old", cards: []), Deck(id: "toefl-1", name: "F", cards: []),
                   Deck(id: "mine", name: "M", cards: [])]
-        #expect(Seed.migrate(v2, from: 2, seed: seed).map(\.name) == ["T", "edited", "M"])
+        #expect(Seed.migrate(v2, from: 2, seed: seed).map(\.id) == ["toeic-basic-01", "toeic-mid-01", "mine"])
+        let v3 = [Deck(id: "toeic-basic-01", name: "T", cards: []), Deck(id: "toefl-2", name: "F", cards: []),
+                  Deck(id: "mine", name: "M", cards: [])]
+        #expect(Seed.migrate(v3, from: 3, seed: seed).map(\.id) == ["toeic-basic-01", "mine"])
     }
 
     @Test func groupingKeepsOrderAndPutsUncategorizedLast() {
@@ -271,14 +274,42 @@ struct SidebarStateTests {
         if let collapsed { defaults.set(collapsed, forKey: "collapsedCategories") }
         if let deck { defaults.set(deck, forKey: "selectedDeckID") }
         let store = FileManager.default.temporaryDirectory.appendingPathComponent("\(suite).json")
-        return AppModel(storeURL: store, defaults: defaults, bundle: Bundle(for: Session.self))
+        let bundle = Bundle(for: Session.self)
+        if seedVersion != nil, let url = bundle.url(forResource: "decks", withExtension: "json"),
+           let data = try? Data(contentsOf: url) {
+            // An existing user: a saved deck list is already there.
+            try? data.write(to: store)
+        }
+        return AppModel(storeURL: store, defaults: defaults, bundle: bundle)
     }
 
-    @Test func freshStartOpensOnlyTheCurrentCategory() {
+    @Test func firstLaunchAsksBeforeAddingDecks() {
         let model = makeModel(seedVersion: nil, collapsed: nil, deck: nil)
-        let current = model.selectedDeck?.category ?? ""
-        #expect(!model.collapsedCategories.contains(current))
-        #expect(model.collapsedCategories.count == Seed.group(model.decks).count - 1)
+        #expect(model.deckPicker == .welcome)
+        #expect(model.decks.isEmpty)
+        let n = model.addBuiltIn(categories: ["토익 기초 (600+)", "토익 숙어"], firstRun: true)
+        #expect(n == 32)
+        #expect(model.deckPicker == nil)
+        #expect(model.selectedDeckID == "toeic-basic-01")
+        #expect(model.collapsedCategories == ["토익 숙어"])
+    }
+
+    @Test func firstLaunchCanStartEmpty() {
+        let model = makeModel(seedVersion: nil, collapsed: nil, deck: nil)
+        #expect(model.addBuiltIn(categories: [], firstRun: true) == 0)
+        #expect(model.decks.isEmpty)
+        #expect(model.selectedDeckID == nil)
+    }
+
+    @Test func deletingACategoryAndAddingItBack() {
+        let model = makeModel(seedVersion: nil, collapsed: nil, deck: nil)
+        model.addBuiltIn(categories: Set(Seed.group(model.seed).map(\.category)), firstRun: true)
+        #expect(!model.decks.contains { $0.id.hasPrefix("toefl") })
+        model.deleteCategory("토익 기초 (600+)")
+        #expect(!model.decks.contains { $0.category == "토익 기초 (600+)" })
+        #expect(model.selectedDeck?.category == "토익 중급 (800+)")
+        #expect(model.addBuiltIn(categories: ["토익 기초 (600+)"], firstRun: false) == 28)
+        #expect(model.decks.first?.id == "toeic-basic-01", "built-in decks keep the seed order")
     }
 
     @Test func selectedDecksCategoryIsOpenedEvenIfSavedClosed() {

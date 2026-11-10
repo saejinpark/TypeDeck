@@ -2,8 +2,8 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
-    @State private var restoreNote: String?
     @State private var pendingDelete: Deck?
+    @State private var pendingCategory: String?
 
     var body: some View {
         @Bindable var model = model
@@ -29,15 +29,36 @@ struct ContentView: View {
             DeckEditorView(target: target)
                 .id(target)
         }
+        .sheet(item: $model.deckPicker, onDismiss: { model.refocus() }) { mode in
+            DeckPickerView(mode: mode)
+        }
         .confirmationDialog(
             "'\(pendingDelete?.name ?? "")' 덱을 삭제할까요?",
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
             presenting: pendingDelete
         ) { deck in
-            Button("삭제", role: .destructive) { model.delete(deck.id) }
-        } message: { _ in
-            Text("되돌릴 수 없어요.")
+            Button("삭제", role: .destructive) { model.delete(deck.id); model.refocus() }
+        } message: { deck in
+            Text(model.isBuiltIn(deck) ? Self.comeBack : "되돌릴 수 없어요.")
         }
+        .confirmationDialog(
+            categoryDeleteTitle,
+            isPresented: Binding(get: { pendingCategory != nil }, set: { if !$0 { pendingCategory = nil } }),
+            presenting: pendingCategory
+        ) { category in
+            Button("모두 삭제", role: .destructive) { model.deleteCategory(category); model.refocus() }
+        } message: { category in
+            let list = model.decks.filter { $0.category.trimmingCharacters(in: .whitespaces) == category }
+            Text(list.allSatisfy(model.isBuiltIn) ? Self.comeBack : "되돌릴 수 없어요.")
+        }
+    }
+
+    private static let comeBack = "기본 덱이라 사이드바 아래 '기본 덱 추가'에서 다시 넣을 수 있어요."
+
+    private var categoryDeleteTitle: String {
+        guard let c = pendingCategory else { return "" }
+        let n = model.decks.filter { $0.category.trimmingCharacters(in: .whitespaces) == c }.count
+        return "'\(c.isEmpty ? Seed.uncategorized : c)' 카테고리의 덱 \(n)개를 모두 삭제할까요?"
     }
 
     private var sidebar: some View {
@@ -49,7 +70,8 @@ struct ContentView: View {
                 CategoryHeader(name: group.category.isEmpty ? Seed.uncategorized : group.category,
                                count: group.decks.count,
                                isOpen: isOpen,
-                               hasCurrent: group.decks.contains { $0.id == model.selectedDeckID }) {
+                               hasCurrent: group.decks.contains { $0.id == model.selectedDeckID },
+                    onDelete: { pendingCategory = group.category }) {
                     withAnimation(.easeOut(duration: 0.15)) { model.toggleCategory(group.category) }
                 }
                 .padding(.top, 6)
@@ -57,6 +79,8 @@ struct ContentView: View {
                 .contextMenu {
                     Button("모두 펼치기") { model.setAllCategories(open: true) }
                     Button("모두 접기") { model.setAllCategories(open: false) }
+                    Divider()
+                    Button("카테고리 삭제…", role: .destructive) { pendingCategory = group.category }
                 }
                 if isOpen {
                     ForEach(group.decks) { deck in
@@ -69,6 +93,7 @@ struct ContentView: View {
                                 .monospacedDigit()
                         }
                         .padding(.leading, 18)
+                        .modifier(HoverDelete(label: "'\(deck.name)' 덱 삭제") { pendingDelete = deck })
                         .tag(deck.id)
                         .contextMenu {
                             Button("편집…") { model.editorTarget = .deck(deck.id) }
@@ -77,6 +102,10 @@ struct ContentView: View {
                     }
                 }
             }
+        }
+        // Delete key on the selected deck.
+        .onDeleteCommand {
+            if let deck = model.selectedDeck { pendingDelete = deck }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             if Seed.group(model.decks).count > 1 {
@@ -114,18 +143,10 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .help("Apple Intelligence가 PDF 내용으로 카드를 만들어요 (⇧⌘O)")
-                HStack {
-                    Button("기본 덱 복원") {
-                        let n = model.restoreDefaults()
-                        restoreNote = n == 0 ? "기본 덱이 모두 있어요" : "\(n)개 덱을 되살렸어요"
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { restoreNote = nil }
-                    }
+                Button("기본 덱 추가") { model.deckPicker = .add }
                     .buttonStyle(.link)
                     .font(.caption)
-                    if let restoreNote {
-                        Text(restoreNote).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
+                    .help("토익 단어 덱을 골라서 넣습니다")
             }
             .padding(12)
         }
@@ -139,10 +160,11 @@ private struct CategoryHeader: View {
     let count: Int
     let isOpen: Bool
     let hasCurrent: Bool
+    var onDelete: (() -> Void)?
     let toggle: () -> Void
 
     var body: some View {
-        Button(action: toggle) {
+        let header = Button(action: toggle) {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .bold))
@@ -165,6 +187,37 @@ private struct CategoryHeader: View {
         .help(isOpen ? "접기" : "펼치기")
         .accessibilityLabel("\(name) 카테고리, 덱 \(count)개")
         .accessibilityValue(isOpen ? "펼쳐짐" : "접힘")
+        if let onDelete {
+            header.modifier(HoverDelete(label: "'\(name)' 카테고리 삭제", action: onDelete))
+        } else {
+            header
+        }
+    }
+}
+
+/// A trash button that shows over the trailing edge of a sidebar row while it is hovered.
+private struct HoverDelete: ViewModifier {
+    let label: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .trailing) {
+                if hovering {
+                    Button(action: action) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11, weight: .medium))
+                            .frame(width: 22, height: 20)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help(label)
+                    .accessibilityLabel(label)
+                }
+            }
+            .onHover { hovering = $0 }
     }
 }
 

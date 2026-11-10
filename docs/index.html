@@ -22,7 +22,7 @@
       <nav class="deck-list" id="deckList" aria-label="덱 목록"></nav>
       <div class="sidebar-foot">
         <button class="ghost-btn keep-focus" id="newDeck" type="button">＋ 새 덱</button>
-        <button class="link-btn keep-focus" id="restoreDecks" type="button">기본 덱 복원</button>
+        <button class="link-btn keep-focus" id="restoreDecks" type="button">기본 덱 추가</button>
         <span class="note" id="sidebarNote" role="status"></span>
       </div>
     </aside>
@@ -94,6 +94,24 @@
         <span class="spacer"></span>
         <button type="button" class="ghost-btn" id="editorCancel">취소</button>
         <button type="button" class="primary-btn" id="editorSave">저장 <span class="shortcut">⌘↵</span></button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="editor picker" id="picker" aria-labelledby="pickerTitle">
+    <div class="editor-inner">
+      <div class="picker-hero">
+        <img src="icon.svg" alt="" width="44" height="44">
+        <div>
+          <h2 id="pickerTitle"></h2>
+          <p id="pickerLead"></p>
+        </div>
+      </div>
+      <div class="picker-list" id="pickerList"></div>
+      <div class="editor-actions">
+        <span class="spacer"></span>
+        <button type="button" class="ghost-btn" id="pickerSkip"></button>
+        <button type="button" class="primary-btn" id="pickerOk"></button>
       </div>
     </div>
   </dialog>

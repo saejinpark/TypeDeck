@@ -147,7 +147,7 @@ test('parseCardsDetailed counts lines it could not use', () => {
   assert.equal(r.skipped, 2);
 });
 
-import { migrateDecks, groupDecks, collapsedExcept, SEED_VERSION } from '../docs/core.js';
+import { migrateDecks, groupDecks, collapsedExcept, seedCategories, addSeedDecks, SEED_VERSION } from '../docs/core.js';
 
 
 test('multiple choice offers the answer and distinct distractors', () => {
@@ -174,14 +174,17 @@ test('multiple choice with a small deck uses what it has', () => {
 });
 
 test('migrateDecks replaces retired built-in decks once', () => {
-  const seed = [{ id: 'toeic-basic-01', name: 'T', category: '토익', cards: [['a', '1']] }, { id: 'toefl-1', name: 'F', cards: [['b', '2']] }];
+  const seed = [{ id: 'toeic-basic-01', name: 'T', category: '토익', cards: [['a', '1']] }, { id: 'toeic-mid-01', name: 'U', cards: [['b', '2']] }];
   const old = [{ id: 'proverbs', name: 'P', cards: [] }, { id: 'mine', name: 'M', cards: [['x', 'y']] }];
   const next = migrateDecks(old, 1, seed);
-  assert.deepEqual(next.map((d) => d.id), ['toeic-basic-01', 'toefl-1', 'mine']);
+  assert.deepEqual(next.map((d) => d.id), ['toeic-basic-01', 'toeic-mid-01', 'mine']);
   assert.equal(migrateDecks(next, SEED_VERSION, seed), next);
-  // Version 2 had three small TOEIC decks; they give way to the day decks, TOEFL is kept as is.
-  const v2 = [{ id: 'toeic-1', name: 'old', cards: [] }, { id: 'toefl-1', name: 'edited', cards: [] }, { id: 'mine', name: 'M', cards: [] }];
-  assert.deepEqual(migrateDecks(v2, 2, seed).map((d) => [d.id, d.name]), [['toeic-basic-01', 'T'], ['toefl-1', 'edited'], ['mine', 'M']]);
+  // Version 2 had three small TOEIC decks and TOEFL; both give way to the day decks.
+  const v2 = [{ id: 'toeic-1', name: 'old', cards: [] }, { id: 'toefl-1', name: 'F', cards: [] }, { id: 'mine', name: 'M', cards: [] }];
+  assert.deepEqual(migrateDecks(v2, 2, seed).map((d) => d.id), ['toeic-basic-01', 'toeic-mid-01', 'mine']);
+  // From version 3 only TOEFL goes; a TOEIC deck the user deleted is not brought back.
+  const v3 = [{ id: 'toeic-basic-01', name: 'T', cards: [] }, { id: 'toefl-2', name: 'F', cards: [] }, { id: 'mine', name: 'M', cards: [] }];
+  assert.deepEqual(migrateDecks(v3, 3, seed).map((d) => d.id), ['toeic-basic-01', 'mine']);
 });
 
 test('groupDecks keeps first-seen order and puts uncategorized last', () => {
@@ -246,4 +249,18 @@ test('collapsedExcept leaves only the current deck category open', () => {
   const decks = [{ id: 'a', category: '토익 기초' }, { id: 'b', category: '토익 기초' }, { id: 'c', category: '토플' }, { id: 'd' }];
   assert.deepEqual(collapsedExcept(decks, 'c'), ['토익 기초', '']);
   assert.deepEqual(collapsedExcept(decks, 'missing'), ['토익 기초', '토플']);
+});
+
+test('seedCategories reports what is missing and addSeedDecks keeps seed order first', () => {
+  const seed = [
+    { id: 'b1', category: '기초', cards: [['a', '1'], ['b', '2']] },
+    { id: 'b2', category: '기초', cards: [['c', '3']] },
+    { id: 'm1', category: '중급', cards: [['d', '4']] },
+  ];
+  const mine = { id: 'mine', category: '', cards: [] };
+  const cats = seedCategories(seed, [seed[1], mine]);
+  assert.deepEqual(cats.map((c) => [c.category, c.words, c.missing.map((d) => d.id)]), [['기초', 3, ['b1']], ['중급', 1, ['m1']]]);
+  const next = addSeedDecks([mine, seed[2]], seed, [seed[0]]);
+  assert.deepEqual(next.map((d) => d.id), ['b1', 'm1', 'mine']);
+  assert.deepEqual(addSeedDecks([], seed, []), []);
 });

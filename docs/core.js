@@ -378,23 +378,56 @@ export class InputTracker {
 
 /* ---------- decks ---------- */
 
-export const SEED_VERSION = 3;
+export const SEED_VERSION = 4;
+/** The last seed version that brought new built-in decks. Later versions only retire decks. */
+export const SEED_DECKS_ADDED = 3;
 /**
- * Built-in decks from earlier versions that were replaced: the original sample decks (v2) and
- * the three 50-word TOEIC decks that became the full TOEIC day decks (v3).
+ * Built-in decks from earlier versions that were removed: the original sample decks (v2), the
+ * three 50-word TOEIC decks that became the TOEIC day decks (v3) and the TOEFL decks (v4).
  */
-export const RETIRED_SEED_IDS = ['proverbs', 'http-status', 'git', 'js-methods', 'elements', 'capitals', 'toeic-1', 'toeic-2', 'toeic-3'];
+export const RETIRED_SEED_IDS = [
+  'proverbs', 'http-status', 'git', 'js-methods', 'elements', 'capitals',
+  'toeic-1', 'toeic-2', 'toeic-3', 'toefl-1', 'toefl-2', 'toefl-3',
+];
 
-/** Drops retired built-in decks and adds the current built-in ones, once per seed version. */
+/**
+ * Drops retired built-in decks, once per seed version. Built-in decks are only added for data
+ * older than SEED_DECKS_ADDED, so a deck the user deleted does not come back on an update.
+ */
 export function migrateDecks(decks, seedVersion, seed) {
-  if ((seedVersion ?? 1) >= SEED_VERSION) return decks;
+  const from = seedVersion ?? 1;
+  if (from >= SEED_VERSION) return decks;
   const kept = decks.filter((d) => !RETIRED_SEED_IDS.includes(d.id));
+  if (from >= SEED_DECKS_ADDED) return kept;
   const missing = seed.filter((s) => !kept.some((d) => d.id === s.id));
   const clone = (d) => ({ id: d.id, name: d.name, category: d.category ?? '', cards: d.cards.map((c) => [c[0], c[1]]) });
   return [...missing.map(clone), ...kept];
 }
 
 export const UNCATEGORIZED = '미분류';
+
+/** Built-in decks grouped by category, with the ones not yet in `decks` and the word count. */
+export function seedCategories(seed, decks) {
+  const have = new Set(decks.map((d) => d.id));
+  return groupDecks(seed).map(({ category, decks: list }) => ({
+    category,
+    decks: list,
+    words: list.reduce((n, d) => n + d.cards.length, 0),
+    missing: list.filter((d) => !have.has(d.id)),
+  }));
+}
+
+/**
+ * Adds the given built-in decks. Built-in decks keep the seed's order and come before the
+ * user's own decks, which keep theirs.
+ */
+export function addSeedDecks(decks, seed, add) {
+  const byId = new Map(decks.map((d) => [d.id, d]));
+  for (const d of add) if (!byId.has(d.id)) byId.set(d.id, d);
+  const seedIds = new Set(seed.map((d) => d.id));
+  const builtIn = seed.filter((d) => byId.has(d.id)).map((d) => byId.get(d.id));
+  return [...builtIn, ...decks.filter((d) => !seedIds.has(d.id))];
+}
 
 /** Every category except the one holding `deckId`: the sidebar starts with only that one open. */
 export function collapsedExcept(decks, deckId) {

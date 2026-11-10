@@ -1,4 +1,4 @@
-import { Session, InputTracker, diff, chars, migrateDecks, groupDecks, collapsedExcept, SEED_VERSION, UNCATEGORIZED } from './core.js';
+import { Session, InputTracker, diff, chars, migrateDecks, groupDecks, collapsedExcept, seedCategories, addSeedDecks, SEED_VERSION, UNCATEGORIZED } from './core.js';
 import { setupEditor, openEditor as openDeckEditor, closeEditor } from './editor.js';
 
 const STORE_KEY = 'typedeck.v1';
@@ -52,8 +52,10 @@ function setupSink() {
   sink.addEventListener('blur', () => $('#arena').classList.remove('focused'));
 }
 
+const modalOpen = () => $('#editor').open || $('#picker').open;
+
 function focusSink() {
-  if (!$('#editor').open && document.activeElement !== sink) sink.focus({ preventScroll: true });
+  if (!modalOpen() && document.activeElement !== sink) sink.focus({ preventScroll: true });
 }
 
 /** Starts the next card's text from scratch. Safe to call at any time. */
@@ -343,6 +345,12 @@ function emptyCard() {
   btn.type = 'button';
   btn.addEventListener('click', () => openEditor(store.decks.length ? store.settings.deckId : null));
   card.append(btn);
+  if (!store.decks.length && seed.length) {
+    const add = el('button', 'ghost-btn', '토익 단어 덱 넣기');
+    add.type = 'button';
+    add.addEventListener('click', () => openPicker(false));
+    card.append(add);
+  }
   return card;
 }
 
@@ -386,7 +394,9 @@ function renderDeckList() {
     head.classList.toggle('has-current', group.decks.some((d) => d.id === store.settings.deckId));
     head.append(el('span', 'chev', '›'), el('span', 'group-name', key || UNCATEGORIZED), el('span', 'count', `${group.decks.length}개`));
     head.addEventListener('click', () => toggleGroup(key));
-    section.append(head);
+    const headRow = el('div', 'group-row');
+    headRow.append(head, rowAction(`'${key || UNCATEGORIZED}' 카테고리 삭제`, () => deleteCategory(key)));
+    section.append(headRow);
     if (isOpen) {
       for (const deck of group.decks) {
         const b = el('button', 'deck-item keep-focus');
@@ -394,7 +404,9 @@ function renderDeckList() {
         b.setAttribute('aria-current', String(deck.id === store.settings.deckId));
         b.append(el('span', '', deck.name), el('span', 'count', String(deck.cards.length)));
         b.addEventListener('click', () => selectDeck(deck.id));
-        section.append(b);
+        const row = el('div', 'deck-row');
+        row.append(b, rowAction(`'${deck.name}' 덱 삭제`, () => deleteDeck(deck.id)));
+        section.append(row);
       }
     }
     list.append(section);
@@ -407,6 +419,44 @@ function renderDeckList() {
   $('#deckName').textContent = deck ? deck.name : 'TypeDeck';
   $('#editDeck').hidden = !deck;
   document.title = deck ? `${deck.name} · TypeDeck` : 'TypeDeck';
+}
+
+const TRASH = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2.5 4h11M6 4V2.75h4V4M4 4l.7 9.25h6.6L12 4M6.75 6.75v4M9.25 6.75v4"/></svg>';
+
+/** The small trash button that shows when a sidebar row is hovered. */
+function rowAction(label, onClick) {
+  const b = el('button', 'row-action keep-focus');
+  b.type = 'button';
+  b.title = label;
+  b.setAttribute('aria-label', label);
+  b.innerHTML = TRASH;
+  b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+  return b;
+}
+
+const isBuiltIn = (deck) => seed.some((s) => s.id === deck.id);
+const comeBackNote = '기본 덱이라 사이드바 아래 \'기본 덱 추가\'에서 다시 넣을 수 있어요.';
+
+/** Removes decks and keeps the selection and the collapsed list consistent. */
+function removeDecks(ids) {
+  store.decks = store.decks.filter((d) => !ids.has(d.id));
+  if (!currentDeck()) store.settings.deckId = store.decks[0]?.id ?? null;
+  const cats = new Set(store.decks.map((d) => (d.category ?? '').trim()));
+  store.settings.collapsed = (store.settings.collapsed ?? []).filter((c) => cats.has(c));
+  revealDeck(store.settings.deckId);
+  save();
+  if ($('#editor').open) closeEditor();
+  renderDeckList();
+  startSession();
+}
+
+function deleteCategory(key) {
+  const list = store.decks.filter((d) => (d.category ?? '').trim() === key);
+  if (!list.length) return;
+  const tail = list.every(isBuiltIn) ? comeBackNote : '되돌릴 수 없어요.';
+  if (!confirm(`'${key || UNCATEGORIZED}' 카테고리의 덱 ${list.length}개를 모두 삭제할까요?\n${tail}`)) return;
+  removeDecks(new Set(list.map((d) => d.id)));
+  note(`덱 ${list.length}개를 삭제했어요`);
 }
 
 function toggleAllGroups() {
@@ -493,13 +543,76 @@ function saveDeck(id, name, category, cards) {
 
 function deleteDeck(id) {
   const deck = store.decks.find((d) => d.id === id);
-  if (!deck || !confirm(`'${deck.name}' 덱을 삭제할까요? 되돌릴 수 없어요.`)) return;
-  store.decks = store.decks.filter((d) => d.id !== id);
-  if (store.settings.deckId === id) store.settings.deckId = store.decks[0]?.id ?? null;
+  if (!deck) return;
+  const tail = isBuiltIn(deck) ? comeBackNote : '되돌릴 수 없어요.';
+  if (!confirm(`'${deck.name}' 덱을 삭제할까요?\n${tail}`)) return;
+  removeDecks(new Set([id]));
+}
+
+/* ---------- built-in deck picker (first run and "기본 덱 추가") ---------- */
+
+function openPicker(firstRun) {
+  const dlg = $('#picker');
+  const cats = seedCategories(seed, store.decks);
+  $('#pickerTitle').textContent = firstRun ? 'TypeDeck에 오신 걸 환영해요' : '기본 덱 추가';
+  $('#pickerLead').textContent = firstRun
+    ? '카드에 나온 단어의 뜻을 치면 바로 다음 카드로 넘어가요. 토익 영단어 덱을 넣어 드릴까요? 나중에 사이드바 아래 \'기본 덱 추가\'에서 언제든 넣을 수 있어요.'
+    : '넣을 토익 덱을 고르세요. 이미 있는 덱은 그대로 두고 빠진 덱만 넣어요.';
+  const list = $('#pickerList');
+  list.replaceChildren();
+  for (const c of cats) {
+    const row = el('label', 'picker-row');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.value = c.category;
+    box.checked = c.missing.length > 0;
+    box.disabled = c.missing.length === 0;
+    const text = el('span', 'picker-text');
+    text.append(el('b', '', c.category || UNCATEGORIZED),
+      el('small', '', `덱 ${c.decks.length}개 · ${c.words.toLocaleString('ko-KR')}단어`));
+    const state = c.missing.length === 0 ? '모두 있음' : c.missing.length < c.decks.length ? `${c.missing.length}개 빠짐` : '';
+    row.append(box, text, el('span', 'picker-state', state));
+    box.addEventListener('change', update);
+    list.append(row);
+  }
+  const ok = $('#pickerOk');
+  const skip = $('#pickerSkip');
+  skip.textContent = firstRun ? '빈 상태로 시작' : '취소';
+  function update() {
+    const n = list.querySelectorAll('input:checked').length;
+    ok.textContent = firstRun ? (n ? '선택한 덱으로 시작' : '빈 상태로 시작') : '추가';
+    ok.disabled = !firstRun && n === 0;
+  }
+  update();
+  ok.onclick = () => {
+    const chosen = new Set([...list.querySelectorAll('input:checked')].map((b) => b.value));
+    const add = cats.filter((c) => chosen.has(c.category)).flatMap((c) => c.missing).map(cloneDeck);
+    dlg.close();
+    applyPicked(add, firstRun);
+  };
+  skip.onclick = () => { dlg.close(); if (firstRun) applyPicked([], true); };
+  // The first run has to end with a choice; Esc does not just dismiss it.
+  dlg.oncancel = (e) => { if (firstRun) e.preventDefault(); };
+  dlg.showModal();
+  ok.focus();
+}
+
+function applyPicked(add, firstRun) {
+  store.decks = addSeedDecks(store.decks, seed, add);
+  if (firstRun) {
+    store.seedVersion = SEED_VERSION;
+    store.settings.deckId = store.decks[0]?.id ?? null;
+    store.settings.collapsed = collapsedExcept(store.decks, store.settings.deckId);
+  } else {
+    if (!currentDeck()) store.settings.deckId = add[0]?.id ?? store.decks[0]?.id ?? null;
+    const added = new Set(add.map((d) => (d.category ?? '').trim()));
+    store.settings.collapsed = (store.settings.collapsed ?? []).filter((c) => !added.has(c) || c === '');
+    if (add.length) note(`덱 ${add.length}개를 넣었어요`);
+  }
   save();
-  closeEditor();
   renderDeckList();
   startSession();
+  focusSink();
 }
 
 /* ---------- wiring ---------- */
@@ -516,7 +629,7 @@ function bindUI() {
 
   // Typing anywhere goes to the card.
   document.addEventListener('keydown', (e) => {
-    if ($('#editor').open || document.activeElement === sink) return;
+    if (modalOpen() || document.activeElement === sink) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const tag = document.activeElement?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -545,14 +658,8 @@ function bindUI() {
   $('#newDeck').addEventListener('click', () => openEditor(null));
   $('#toggleGroups').addEventListener('click', toggleAllGroups);
   $('#editDeck').addEventListener('click', () => openEditor(store.settings.deckId));
-  $('#restoreDecks').addEventListener('click', () => {
-    const missing = seed.filter((d) => !store.decks.some((x) => x.id === d.id));
-    if (!missing.length) { note('기본 덱이 모두 있어요'); return; }
-    store.decks.push(...missing.map(cloneDeck));
-    if (!currentDeck()) store.settings.deckId = store.decks[0].id;
-    save(); renderDeckList(); if (!session) startSession();
-    note(`${missing.length}개 덱을 되살렸어요`);
-  });
+  $('#restoreDecks').addEventListener('click', () => openPicker(false));
+  $('#picker').addEventListener('close', () => setTimeout(focusSink, 0));
 
   setupEditor();
   $('#editor').addEventListener('close', () => setTimeout(focusSink, 0));
@@ -565,26 +672,29 @@ async function boot() {
   } catch { seed = []; }
   const saved = loadSaved();
   // Before seed 3 there were only a few decks; now only the current deck's category starts open.
-  const startCollapsed = !saved || (saved.seedVersion ?? 1) < 3;
-  if (saved && Array.isArray(saved.decks)) {
+  const firstRun = !(saved && Array.isArray(saved.decks));
+  const startCollapsed = firstRun || (saved.seedVersion ?? 1) < 3;
+  if (!firstRun) {
     store = {
       decks: migrateDecks(saved.decks, saved.seedVersion, seed),
       seedVersion: SEED_VERSION,
       settings: { ...store.settings, ...saved.settings },
     };
   } else {
-    store.decks = seed.map(cloneDeck);
+    // First run: nothing is stored until the welcome dialog is answered.
+    store.decks = [];
   }
   if (!currentDeck()) store.settings.deckId = store.decks[0]?.id ?? null;
   if (startCollapsed) store.settings.collapsed = collapsedExcept(store.decks, store.settings.deckId);
   revealDeck(store.settings.deckId);
-  save();
+  if (!firstRun) save();
   setupSink();
   bindUI();
   renderDeckList();
   renderControls();
   startSession();
-  focusSink();
+  if (firstRun) openPicker(true);
+  else focusSink();
 }
 
 // Read-only handle for debugging in the console.

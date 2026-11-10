@@ -436,6 +436,9 @@ private struct EmptyCard: View {
                 if let id = model.selectedDeckID { model.editorTarget = .deck(id) } else { model.editorTarget = .new }
             }
             .buttonStyle(.borderedProminent)
+            if model.decks.isEmpty && !model.seed.isEmpty {
+                Button("토익 단어 덱 넣기") { model.deckPicker = .add }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .modifier(CardShape())

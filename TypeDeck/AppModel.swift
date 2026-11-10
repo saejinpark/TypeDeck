@@ -22,6 +22,12 @@ struct DeckDraft: Hashable {
     var note: String
 }
 
+/// The built-in deck picker: the welcome on first launch, or "기본 덱 추가" later.
+enum DeckPickerMode: String, Identifiable {
+    case welcome, add
+    var id: String { rawValue }
+}
+
 enum EditorTarget: Identifiable, Hashable {
     case new
     case deck(String)
@@ -67,6 +73,7 @@ final class AppModel {
         var progress: Double
     }
     var showPDFImporter = false
+    var deckPicker: DeckPickerMode?
     private(set) var importStatus: ImportStatus?
     var importError: String?
     @ObservationIgnored private var importTask: Task<Void, Never>?
@@ -97,18 +104,21 @@ final class AppModel {
         shuffle = defaults.object(forKey: Keys.shuffle) as? Bool ?? true
         collapsedCategories = Set(defaults.stringArray(forKey: Keys.collapsed) ?? [])
         let storedVersion = defaults.integer(forKey: Keys.seedVersion)
-        if let stored = Self.loadDecks(from: storeURL) {
+        let stored = Self.loadDecks(from: storeURL)
+        if let stored {
             decks = Seed.migrate(stored, from: storedVersion, seed: seed)
+            defaults.set(Seed.version, forKey: Keys.seedVersion)
         } else {
-            decks = seed
+            // First launch: nothing is stored until the welcome sheet is answered.
+            decks = []
+            deckPicker = .welcome
         }
-        defaults.set(Seed.version, forKey: Keys.seedVersion)
         let saved = defaults.string(forKey: Keys.deck)
         selectedDeckID = decks.contains { $0.id == saved } ? saved : decks.first?.id
         // Before seed 3 there were only a few decks; now only the current deck's category starts open.
         if storedVersion < 3 { collapsedCategories = Seed.collapsed(except: selectedDeckID, in: decks) }
         reveal(selectedDeckID)
-        save()
+        if stored != nil { save() }
         startSession()
     }
 
@@ -204,14 +214,40 @@ final class AppModel {
         }
     }
 
-    /// Adds back any built-in deck that was deleted. Returns how many were added.
-    @discardableResult
-    func restoreDefaults() -> Int {
-        let missing = seed.filter { s in !decks.contains { $0.id == s.id } }
-        decks.append(contentsOf: missing)
+    func isBuiltIn(_ deck: Deck) -> Bool { seed.contains { $0.id == deck.id } }
+
+    /// Deletes every deck in `category` ("" is the uncategorized group).
+    func deleteCategory(_ category: String) {
+        let ids = Set(decks.filter { $0.category.trimmingCharacters(in: .whitespaces) == category }.map(\.id))
+        guard !ids.isEmpty else { return }
+        decks.removeAll { ids.contains($0.id) }
+        collapsedCategories.remove(category)
         save()
-        if selectedDeck == nil { select(decks.first?.id) }
-        return missing.count
+        if let id = selectedDeckID, ids.contains(id) {
+            selectedDeckID = nil
+            select(decks.first?.id)
+        }
+    }
+
+    /// Adds the missing built-in decks of `categories`. On the welcome sheet this also finishes
+    /// the first launch, even when nothing was chosen. Returns how many decks were added.
+    @discardableResult
+    func addBuiltIn(categories: Set<String>, firstRun: Bool) -> Int {
+        let add = Seed.categories(seed: seed, decks: decks).filter { categories.contains($0.category) }.flatMap(\.missing)
+        decks = Seed.adding(add, to: decks, seed: seed)
+        save()
+        if firstRun {
+            defaults.set(Seed.version, forKey: Keys.seedVersion)
+            selectedDeckID = nil
+            select(decks.first?.id)
+            collapsedCategories = Seed.collapsed(except: selectedDeckID, in: decks)
+        } else {
+            for c in Set(add.map { $0.category.trimmingCharacters(in: .whitespaces) }) { collapsedCategories.remove(c) }
+            if selectedDeck == nil { select(add.first?.id ?? decks.first?.id) }
+        }
+        deckPicker = nil
+        refocus()
+        return add.count
     }
 
     // MARK: Practice

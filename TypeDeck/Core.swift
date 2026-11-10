@@ -53,21 +53,53 @@ struct DeckFile: Codable {
 }
 
 enum Seed {
-    static let version = 3
-    /// Built-in decks from earlier versions that were replaced: the original sample decks (v2)
-    /// and the three 50-word TOEIC decks that became the full TOEIC day decks (v3).
+    static let version = 4
+    /// The last seed version that brought new built-in decks. Later versions only retire decks.
+    static let decksAdded = 3
+    /// Built-in decks from earlier versions that were removed: the original sample decks (v2), the
+    /// three 50-word TOEIC decks that became the TOEIC day decks (v3) and the TOEFL decks (v4).
     static let retiredIDs: Set<String> = ["proverbs", "http-status", "git", "js-methods", "elements", "capitals",
-                                          "toeic-1", "toeic-2", "toeic-3"]
+                                          "toeic-1", "toeic-2", "toeic-3", "toefl-1", "toefl-2", "toefl-3"]
 
-    /// Drops retired built-in decks and adds the current built-in ones, once per seed version.
+    /// Drops retired built-in decks, once per seed version. Built-in decks are only added for data
+    /// older than `decksAdded`, so a deck the user deleted does not come back on an update.
     static func migrate(_ decks: [Deck], from version: Int, seed: [Deck]) -> [Deck] {
         guard version < Self.version else { return decks }
         let kept = decks.filter { !retiredIDs.contains($0.id) }
+        guard version < decksAdded else { return kept }
         let missing = seed.filter { s in !kept.contains { $0.id == s.id } }
         return missing + kept
     }
 
     static let uncategorized = "미분류"
+
+    struct Category: Identifiable {
+        let category: String
+        let decks: [Deck]
+        let words: Int
+        /// Built-in decks of this category that are not in the user's list.
+        let missing: [Deck]
+        var id: String { category }
+    }
+
+    /// Built-in decks grouped by category, with the ones not yet in `decks` and the word count.
+    static func categories(seed: [Deck], decks: [Deck]) -> [Category] {
+        let have = Set(decks.map(\.id))
+        return group(seed).map { g in
+            Category(category: g.category, decks: g.decks, words: g.decks.reduce(0) { $0 + $1.cards.count },
+                     missing: g.decks.filter { !have.contains($0.id) })
+        }
+    }
+
+    /// Adds built-in decks. Built-in decks keep the seed's order and come before the user's own
+    /// decks, which keep theirs.
+    static func adding(_ add: [Deck], to decks: [Deck], seed: [Deck]) -> [Deck] {
+        var byID: [String: Deck] = [:]
+        for d in decks { byID[d.id] = d }
+        for d in add where byID[d.id] == nil { byID[d.id] = d }
+        let seedIDs = Set(seed.map(\.id))
+        return seed.compactMap { byID[$0.id] } + decks.filter { !seedIDs.contains($0.id) }
+    }
 
     /// Every category except the one holding `deckID`: the sidebar starts with only that one open.
     static func collapsed(except deckID: String?, in decks: [Deck]) -> Set<String> {
