@@ -270,6 +270,10 @@ kbd {
 .welcome-text { flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .welcome-text b { font-size: 15px; }
 .welcome-text small { color: var(--muted); font-size: 12.5px; }
+.notice { padding: 11px 14px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 12px; background: var(--accent-soft); font-size: 13px; line-height: 1.55; }
+.notice b { color: var(--accent); }
+.notice ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+.notice li + li { margin-top: 3px; }
 .primary-btn:disabled { opacity: 0.45; cursor: default; }
 .editor-inner { display: flex; flex-direction: column; gap: 14px; padding: 22px; max-height: calc(100dvh - 50px); }
 .editor-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }

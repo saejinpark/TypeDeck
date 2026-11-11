@@ -502,6 +502,6 @@ final class AppModel {
         guard !output.cards.isEmpty else { throw ImportError.noCards }
         let failed = output.failedChunks > 0 ? " 처리하지 못한 구간이 \(output.failedChunks)개 있어요." : ""
         return DeckDraft(name: name, category: category, cards: output.cards,
-                         message: "Apple Intelligence가 \(output.cards.count)장을 만들었어요. 저장하기 전에 확인해 주세요.\(ocrNote)\(failed)")
+                         message: "⚠︎ Apple Intelligence가 만든 초안 \(output.cards.count)장이에요. AI는 틀린 내용도 그럴듯하게 만들어요. 원문과 한 장씩 대조하고, 틀리거나 필요 없는 카드는 지운 뒤 저장하세요.\(ocrNote)\(failed)")
     }
 }
