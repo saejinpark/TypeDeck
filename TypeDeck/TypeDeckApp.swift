@@ -2,13 +2,24 @@ import SwiftUI
 
 @main
 struct TypeDeckApp: App {
-    @State private var model = AppModel()
+    @State private var model: AppModel
+
+    init() {
+        #if DEBUG
+        _model = State(initialValue: ScreenshotDemo.model() ?? AppModel())
+        #else
+        _model = State(initialValue: AppModel())
+        #endif
+    }
 
     var body: some Scene {
         Window("TypeDeck", id: "main") {
             ContentView()
                 .environment(model)
                 .frame(minWidth: 760, minHeight: 540)
+                #if DEBUG
+                .task { await ScreenshotDemo.arrange(model) }
+                #endif
         }
         .defaultSize(width: 1080, height: 720)
         .commands {

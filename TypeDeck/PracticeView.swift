@@ -443,6 +443,7 @@ private struct SummaryCard: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label).font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted)
             Text(value).font(.system(size: 22, weight: .bold)).foregroundStyle(Palette.ink).monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.6)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
