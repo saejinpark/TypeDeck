@@ -189,6 +189,43 @@ struct PDFChunkTests {
         let chunks = PDFTextExtractor.chunks(String(repeating: "가", count: 250), limit: 100)
         #expect(chunks.map(\.count) == [100, 100, 50])
     }
+
+    @Test func runningHeadersPageNumbersAndContentsLinesAreDropped() {
+        let pages = (1...8).map { n in "안전일반\n위험성평가는유해·위험요인을찾는것 \(n)\n\(n * 2)\n4M 위험성평가절차및방법" }
+            + ["제1장 위험성평가개요……………… 4\n본문 마지막"]
+        let cleaned = PDFTextExtractor.cleanPages(pages)
+        #expect(cleaned[0] == "위험성평가는유해·위험요인을찾는것 1")
+        #expect(cleaned[8] == "본문 마지막")
+        // A line on only two of three pages is content, not a header.
+        #expect(PDFTextExtractor.cleanPages(["가\n하나", "가\n둘", "셋"]) == ["가\n하나", "가\n둘", "셋"])
+    }
+}
+
+struct GeneratedCardFilterTests {
+    private func kept(_ pairs: [(String, String)], from source: String) -> [Card] {
+        var seen: Set<String> = []
+        return pairs.compactMap { DeckGenerator.accept(key: $0.0, value: $0.1, in: source, seen: &seen) }
+    }
+
+    @Test func cardsMustComeFromTheTextAndNotGiveTheirAnswerAway() {
+        let source = "결함수분석(Fault tree analysis : FTA)은사고의원인을규명하는기법\nC-1 협착\n위험도 = 빈도 × 강도"
+        let cards = kept([
+            ("결함수 분석(Fault tree analysis : FTA)", "사고 원인 규명 기법"),
+            ("결함수분석(Fault tree analysis, FTA)", "다시 나온 같은 용어"),
+            ("C-1 협착", "협착"),
+            ("사건수분석", "모델이 지어낸 용어"),
+            ("위험도", "빈도 × 강도"),
+        ], from: source)
+        #expect(cards == [Card("결함수 분석(Fault tree analysis : FTA)", "사고 원인 규명 기법"), Card("위험도", "빈도 × 강도")])
+    }
+
+    @Test func questionsNeedAnAnswerInTheText() {
+        let exercise = "1. 위험성평가팀의구성원이아닌것은?\n①정비작업자 ②안전보건관리자"
+        #expect(kept([("1. 위험성평가팀의구성원이아닌것은?", "②안전보건관리자")], from: exercise).isEmpty)
+        #expect(kept([("1. 위험성평가팀의구성원이아닌것은?", "②안전보건관리자")], from: exercise + "\n정답: ②").count == 1)
+        let sentence = String(repeating: "가", count: DeckGenerator.maxKeyLength + 1)
+        #expect(kept([(sentence, "요약")], from: sentence).isEmpty)
+    }
 }
 
 struct MultipleMeaningTests {

@@ -488,7 +488,7 @@ final class AppModel {
 
     private static func makeDraft(from pdf: PDFTextExtractor.Result, fileName: String, category: String,
                                   progress: @escaping @Sendable (Int, Int) async -> Void) async throws -> DeckDraft {
-        let name = pdf.title ?? fileName
+        let name = fileName
         let ocrNote = pdf.ocrPages > 0 ? " 스캔된 \(pdf.ocrPages)쪽은 문자 인식으로 읽었어요." : ""
         if let reason = DeckGenerator.unavailableReason {
             // Without Apple Intelligence, fall back to lines that already look like "key = value".
