@@ -1,4 +1,4 @@
-import { parseCards, parseCardsDetailed, parseImport, serializeCards } from './core.js';
+import { decodeText, parseCards, parseCardsDetailed, parseImport, serializeCards } from './core.js';
 import { enterHandler } from './keys.js';
 
 /*
@@ -109,7 +109,7 @@ export function setupEditor() {
   $('#editorFile').addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (file) importFile(file.name, await file.text());
+    if (file) importFile(file.name, decodeText(await file.arrayBuffer()));
   });
   $('#editorName').addEventListener('input', () => { dirty = true; });
   $('#editorCategory').addEventListener('input', () => { dirty = true; });
@@ -185,15 +185,16 @@ function ensureTrailingBlank() {
   if (!rows.length || !isBlank(rows[rows.length - 1])) rows.push(blankRow());
 }
 
-function rowEl(row, i) {
-  const el = document.createElement('div');
-  el.className = 'card-row';
-  el.innerHTML = `
+const rowTemplate = document.createElement('template');
+rowTemplate.innerHTML = `<div class="card-row">
     <span class="row-num"></span>
     <input class="row-k" autocomplete="off" spellcheck="false" aria-label="키">
     <input class="row-v" autocomplete="off" spellcheck="false" aria-label="값">
     <button type="button" class="row-note-btn" tabindex="-1" aria-label="메모" title="메모 쓰기 · 보기"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3 4h10M3 8h10M3 12h6"/></svg></button>
-    <button type="button" class="row-del" tabindex="-1" aria-label="카드 삭제" title="카드 삭제">×</button>`;
+    <button type="button" class="row-del" tabindex="-1" aria-label="카드 삭제" title="카드 삭제">×</button></div>`;
+
+function rowEl(row, i) {
+  const el = rowTemplate.content.firstElementChild.cloneNode(true);
   el.querySelector('.row-k').value = row.q;
   el.querySelector('.row-v').value = row.a;
   if (row.open) {
@@ -326,6 +327,8 @@ function removeRow(i, then) {
 
 /** Adds the cards of an imported file after the existing ones. */
 function importFile(fileName, text) {
+  if (text === null) return showMessage(`'${fileName}'은(는) 텍스트 파일이 아니에요. 텍스트, CSV, TSV 파일을 골라 주세요.`);
+  if (!text.trim()) return showMessage(`'${fileName}'은(는) 비어 있어요.`);
   const { cards, skipped } = parseImport(text, fileName);
   if (!cards.length) {
     showMessage(`'${fileName}'에서 카드를 찾지 못했어요. 한 줄에 "키 = 값"이나 탭, CSV 두 열로 적힌 파일을 써 주세요.`);

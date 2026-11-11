@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCards, serializeCards, diff, Session, REQUEUE_GAP, meanings, typingTarget, fillSeparators } from '../docs/core.js';
+import { parseCards, serializeCards, diff, Session, REQUEUE_GAP, meanings, typingTarget, fillSeparators, decodeText } from '../docs/core.js';
 
 test('parses the supported separators', () => {
   const cards = parseCards('a = 1\nb\t2\n# comment\n\nc: 3\nd=4\nno separator\ne = x = y\nf : git log --oneline');
@@ -368,4 +368,27 @@ test('every web script parses', async () => {
   for (const file of ['app.js', 'editor.js', 'keys.js', 'core.js']) {
     execFileSync(process.execPath, ['--check', new URL(`../docs/${file}`, import.meta.url).pathname]);
   }
+});
+
+test('files saved by Excel, Notepad or in UTF-16 are read, and a file that is not text is refused', () => {
+  const utf8 = new TextEncoder().encode('사과 = apple');
+  assert.equal(decodeText(utf8), '사과 = apple');
+  assert.equal(decodeText(new Uint8Array([0xef, 0xbb, 0xbf, ...utf8])), '사과 = apple');
+  // "단어,뜻\r\n사과,apple" in CP949, as Korean Excel saves a CSV
+  const cp949 = new Uint8Array([0xb4, 0xdc, 0xbe, 0xee, 0x2c, 0xb6, 0xe6, 0x0d, 0x0a, 0xbb, 0xe7, 0xb0, 0xfa, 0x2c, 0x61, 0x70, 0x70, 0x6c, 0x65]);
+  assert.equal(decodeText(cp949), '단어,뜻\n사과,apple');
+  const utf16 = new Uint8Array([0xff, 0xfe, ...Array.from('키\t값', (c) => [c.charCodeAt(0) & 255, c.charCodeAt(0) >> 8]).flat()]);
+  assert.equal(decodeText(utf16), '키\t값');
+  assert.equal(decodeText(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 13, 1, 2, 3, 4])), null);
+});
+
+test('imports forgive column titles, tab-separated .csv files, list markers and an unclosed quote', async () => {
+  const { parseImport } = await import('../docs/core.js');
+  assert.deepEqual(parseImport('단어,뜻,예문\r\nabandon,"버리다, 포기하다",\r\n', 'a.csv'), { cards: [['abandon', '버리다, 포기하다']], skipped: 0 });
+  assert.deepEqual(parseImport('Term\tDefinition\n인화점\t불이 붙는 가장 낮은 온도', 'b.csv').cards, [['인화점', '불이 붙는 가장 낮은 온도']]);
+  assert.deepEqual(parseImport('TCP,연결형\nUDP,"비연결형\nIP,인터넷', 'c.csv').cards, [['TCP', '연결형'], ['UDP', '비연결형'], ['IP', '인터넷']]);
+  assert.deepEqual(parseImport('Day 3\n1. deteriorate - 악화되다\n3) expedite — 신속히 처리하다\n  • well-known = 잘 알려진', 'd.txt'),
+    { cards: [['deteriorate', '악화되다'], ['expedite', '신속히 처리하다'], ['well-known', '잘 알려진']], skipped: 1 });
+  assert.deepEqual(parseImport('1945\t광복', 'e.tsv').cards, [['1945', '광복']], 'a year is not a list number');
+  assert.deepEqual(parseImport('사과,apple', 'f.csv').cards, [['사과', 'apple']], 'an ordinary first card stays');
 });

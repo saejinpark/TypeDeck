@@ -422,12 +422,19 @@ final class AppModel {
         if url.pathExtension.lowercased() == "pdf" { importPDF(at: url); return }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        var encoding = String.Encoding.utf8
-        guard let text = (try? String(contentsOf: url, encoding: .utf8)) ?? (try? String(contentsOf: url, usedEncoding: &encoding)) else {
-            importError = "파일을 읽지 못했어요. 텍스트(UTF-8) 파일인지 확인해 주세요."
+        let fileName = url.lastPathComponent
+        guard let data = try? Data(contentsOf: url) else {
+            importError = "'\(fileName)'을(를) 열지 못했어요."
             return
         }
-        let fileName = url.lastPathComponent
+        guard let text = Core.decodeText(data) else {
+            importError = "'\(fileName)'은(는) 텍스트 파일이 아니에요. 텍스트, CSV, TSV 파일을 골라 주세요."
+            return
+        }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            importError = "'\(fileName)'은(는) 비어 있어요."
+            return
+        }
         let parsed = Core.parseImport(text, fileName: fileName)
         guard !parsed.cards.isEmpty else {
             importError = "'\(fileName)'에서 카드를 찾지 못했어요. 한 줄에 \"키 = 값\"이나 탭, CSV 두 열로 적힌 파일을 써 주세요."

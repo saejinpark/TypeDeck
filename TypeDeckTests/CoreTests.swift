@@ -339,6 +339,30 @@ struct CategoryListTests {
         #expect(Core.parseImport("a\t1, 2", fileName: "x.tsv").cards == [Card("a", "1, 2")])
         #expect(Core.parseImport("OSI 7계층 = 물리, 데이터링크", fileName: "notes.txt").cards == [Card("OSI 7계층", "물리, 데이터링크")])
     }
+
+    @Test func filesFromExcelNotepadAndUTF16AreDecoded() {
+        let utf8 = Data("사과 = apple".utf8)
+        #expect(Core.decodeText(utf8) == "사과 = apple")
+        #expect(Core.decodeText(Data([0xEF, 0xBB, 0xBF]) + utf8) == "사과 = apple")
+        // "단어,뜻\r\n사과,apple" in CP949, as Korean Excel saves a CSV
+        let cp949 = Data([0xB4, 0xDC, 0xBE, 0xEE, 0x2C, 0xB6, 0xE6, 0x0D, 0x0A, 0xBB, 0xE7, 0xB0, 0xFA, 0x2C, 0x61, 0x70, 0x70, 0x6C, 0x65])
+        #expect(Core.decodeText(cp949) == "단어,뜻\n사과,apple")
+        #expect(Core.decodeText(Data([0xFF, 0xFE]) + "키\t값".data(using: .utf16LittleEndian)!) == "키\t값")
+        #expect(Core.decodeText(Data([0x89, 0x50, 0x4E, 0x47, 0, 0, 0, 13, 1, 2, 3, 4])) == nil)
+    }
+
+    @Test func importForgivesTitlesTabbedCSVListMarkersAndAnUnclosedQuote() {
+        let excel = Core.parseImport("단어,뜻,예문\r\nabandon,\"버리다, 포기하다\",\r\n", fileName: "a.csv")
+        #expect(excel.cards == [Card("abandon", "버리다, 포기하다")])
+        #expect(excel.skipped == 0)
+        #expect(Core.parseImport("Term\tDefinition\n인화점\t불이 붙는 가장 낮은 온도", fileName: "b.csv").cards == [Card("인화점", "불이 붙는 가장 낮은 온도")])
+        #expect(Core.parseImport("TCP,연결형\nUDP,\"비연결형\nIP,인터넷", fileName: "c.csv").cards == [Card("TCP", "연결형"), Card("UDP", "비연결형"), Card("IP", "인터넷")])
+        let web = Core.parseImport("Day 3\n1. deteriorate - 악화되다\n3) expedite — 신속히 처리하다\n  • well-known = 잘 알려진", fileName: "d.txt")
+        #expect(web.cards == [Card("deteriorate", "악화되다"), Card("expedite", "신속히 처리하다"), Card("well-known", "잘 알려진")])
+        #expect(web.skipped == 1)
+        #expect(Core.parseImport("1945\t광복", fileName: "e.tsv").cards == [Card("1945", "광복")])
+        #expect(Core.parseImport("사과,apple", fileName: "f.csv").cards == [Card("사과", "apple")])
+    }
 }
 
 @MainActor
@@ -559,5 +583,42 @@ struct LearningRecordModelTests {
         #expect(reloaded.mastery(of: try! #require(reloaded.selectedDeck)) == (1, 2), "the record is saved")
         reloaded.clearRecord(deck.id)
         #expect(reloaded.mastery(of: try! #require(reloaded.selectedDeck)) == (0, 2))
+    }
+}
+
+@MainActor
+struct FileImportModelTests {
+    private func importing(_ data: Data, as name: String) -> AppModel {
+        let suite = "TypeDeckTests.\(UUID().uuidString)"
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let m = AppModel(storeURL: dir.appendingPathComponent("decks.json"), defaults: UserDefaults(suiteName: suite)!,
+                         bundle: Bundle(for: Session.self))
+        let file = dir.appendingPathComponent(name)
+        try? data.write(to: file)
+        m.importFile(at: file)
+        return m
+    }
+
+    private func draft(_ m: AppModel) -> DeckDraft? {
+        if case .draft(let d) = m.editorTarget { return d }
+        return nil
+    }
+
+    @Test func excelCSVInCP949OpensAsADraftWithoutItsTitleRow() {
+        let cp949 = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosKorean.rawValue)))
+        let m = importing("단어,뜻,예문\r\nabandon,\"버리다, 포기하다\",They abandoned it.\r\nabundant,풍부한,\r\n".data(using: cp949)!, as: "엑셀 기본 저장.csv")
+        #expect(m.importError == nil)
+        #expect(draft(m)?.name == "엑셀 기본 저장")
+        #expect(draft(m)?.cards == [Card("abandon", "버리다, 포기하다", note: "They abandoned it."), Card("abundant", "풍부한")])
+    }
+
+    @Test func emptyAndBinaryFilesExplainWhatIsWrong() {
+        let empty = importing(Data("  \n\t".utf8), as: "공백만.txt")
+        #expect(empty.importError?.contains("비어 있어요") == true)
+        #expect(draft(empty) == nil)
+        let png = importing(Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13] + (0..<400).map { UInt8($0 % 256) }), as: "사실은 사진.txt")
+        #expect(png.importError?.contains("텍스트 파일이 아니에요") == true)
+        #expect(draft(png) == nil)
     }
 }

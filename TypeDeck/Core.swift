@@ -264,64 +264,114 @@ struct CharDiff: Equatable {
 enum Core {
     static func normalize(_ s: String) -> String { s.precomposedStringWithCanonicalMapping }
 
-    private static let separators = ["\t", " = ", " : ", "=", ":"]
+    private static let separators = ["\t", " = ", " : ", "=", ":", " - ", " – ", " — "]
 
-    /// Parses "key = value" lines. Tab, " = ", " : ", "=", ":" are tried in that order.
+    /// Parses "key = value" lines. Tab, " = ", " : ", "=", ":", then a spaced dash " - " are tried
+    /// in that order.
     static func parseCards(_ text: String) -> [Card] {
         parseCardsDetailed(text).cards
     }
 
-    /// Like parseCards, but also counts the non-empty lines that had no usable separator.
-    /// Reads cards from an imported file. CSV and TSV take the first column as the key and the
-    /// rest as meanings (a comma inside quotes stays in the value); anything else uses the same
-    /// separators as pasting.
+    /// Turns the bytes of a picked file into text. Handles UTF-8 (with or without a BOM), UTF-16
+    /// (Excel's "유니코드 텍스트") and CP949/EUC-KR (Excel's default CSV and old Notepad files in
+    /// Korean Windows). Line endings come back as "\n". Returns nil for a file that is not text.
+    static func decodeText(_ data: Data) -> String? {
+        let b = [UInt8](data.prefix(3))
+        var text: String?
+        if b.starts(with: [0xEF, 0xBB, 0xBF]) { text = String(data: data.dropFirst(3), encoding: .utf8) }
+        else if b.starts(with: [0xFF, 0xFE]) { text = String(data: data.dropFirst(2), encoding: .utf16LittleEndian) }
+        else if b.starts(with: [0xFE, 0xFF]) { text = String(data: data.dropFirst(2), encoding: .utf16BigEndian) }
+        else {
+            let cp949 = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosKorean.rawValue)))
+            text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: cp949)
+        }
+        guard let text else { return nil }
+        let odd = text.unicodeScalars.filter { $0.value < 9 || (14...31).contains($0.value) || $0 == "\u{FFFD}" }.count
+        if odd > text.unicodeScalars.count / 100 { return nil }
+        return text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+    }
+
+    /// First rows like "단어, 뜻" or "term, definition" are column titles, not cards.
+    private static let headerWords: Set<String> = ["키", "값", "메모", "단어", "뜻", "의미", "질문", "답", "정답", "문제", "해설", "설명",
+        "예문", "영어", "한국어", "한글", "영단어", "용어", "연도", "사건", "key", "value", "note", "notes", "memo", "word",
+        "meaning", "term", "definition", "question", "answer", "front", "back", "english", "korean", "example"]
+
+    /// "1. ", "2) ", "• ", "- " and the like in front of a line copied from a list.
+    private static let listMarker = /^\s*(?:\d{1,3}[.)]|[-–—•·*▪●○◦])\s+/
+
+    /// Reads cards from an imported file. CSV and TSV columns are key, value and 메모 (a comma
+    /// inside quotes stays in the value); a .csv whose lines are split by tabs is read as TSV.
+    /// Anything else uses the same separators as pasting, after list numbers and bullets are
+    /// dropped. A first row of column titles is left out.
     static func parseImport(_ text: String, fileName: String) -> (cards: [Card], skipped: Int) {
         let ext = (fileName as NSString).pathExtension.lowercased()
-        guard ext == "csv" || ext == "tsv" else { return parseCardsDetailed(text) }
-        let sep: Character = ext == "tsv" ? "\t" : ","
+        var body = text.hasPrefix("\u{FEFF}") ? String(text.dropFirst()) : text
+        body = body.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         var cards: [Card] = []
         var skipped = 0
-        let body = text.hasPrefix("\u{FEFF}") ? String(text.dropFirst()) : text
-        for fields in csvRecords(body, separator: sep) where fields.contains(where: { !$0.isEmpty }) {
-            let key = fields.first ?? ""
-            let value = fields.count > 1 ? fields[1] : ""
-            let note = fields.dropFirst(2).filter { !$0.isEmpty }.joined(separator: "\n")
-            if !key.isEmpty && !value.isEmpty { cards.append(Card(key, value, note: note)) } else { skipped += 1 }
+        if ext == "csv" || ext == "tsv" {
+            let first = body.split(separator: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
+            let tabs = first.filter { $0 == "\t" }.count
+            let sep: Character = ext == "tsv" || tabs > first.filter({ $0 == "," }).count ? "\t" : ","
+            for fields in csvRecords(body, separator: sep) where fields.contains(where: { !$0.isEmpty }) {
+                let key = fields.first ?? ""
+                let value = fields.count > 1 ? fields[1] : ""
+                let note = fields.dropFirst(2).filter { !$0.isEmpty }.joined(separator: "\n")
+                if !key.isEmpty && !value.isEmpty { cards.append(Card(key, value, note: note)) } else { skipped += 1 }
+            }
+        } else {
+            let lines = body.components(separatedBy: "\n").map { $0.replacing(listMarker, with: "", maxReplacements: 1) }
+            (cards, skipped) = parseCardsDetailed(lines.joined(separator: "\n"))
+        }
+        if let first = cards.first, headerWords.contains(first.key.lowercased()), headerWords.contains(first.value.lowercased()) {
+            cards.removeFirst()
         }
         return (cards, skipped)
     }
 
     /// Splits CSV text into records; quotes may wrap a field, "" is a literal quote, and a quoted
-    /// field may span lines (a long 메모 with line breaks).
+    /// field may span lines (a long 메모 with line breaks). A quote that is never closed is read as
+    /// an ordinary character, so one typo does not swallow the rest of the file.
     private static func csvRecords(_ text: String, separator: Character) -> [[String]] {
         var records: [[String]] = []
         var fields: [String] = []
         var cur = ""
         var quoted = false
-        var chars = Array(text)[...]
+        var opened = 0
+        let all = Array(text)
+        var i = 0
         func endField() { fields.append(cur.trimmingCharacters(in: .whitespaces)); cur = "" }
-        while let ch = chars.popFirst() {
+        while i < all.count {
+            let ch = all[i]
             if quoted {
-                if ch == "\"" && chars.first == "\"" { cur.append("\""); chars.removeFirst() }
+                if ch == "\"" && i + 1 < all.count && all[i + 1] == "\"" { cur.append("\""); i += 1 }
                 else if ch == "\"" { quoted = false }
                 else { cur.append(ch) }
             } else if ch == "\"" && cur.trimmingCharacters(in: .whitespaces).isEmpty {
                 quoted = true
+                opened = i
                 cur = ""
             } else if ch == separator {
                 endField()
-            } else if ch == "\n" || ch == "\r" || ch == "\r\n" {
+            } else if ch == "\n" {
                 endField()
                 records.append(fields)
                 fields = []
             } else {
                 cur.append(ch)
             }
+            i += 1
+        }
+        if quoted {
+            var fixed = all
+            fixed.remove(at: opened)
+            return csvRecords(String(fixed), separator: separator)
         }
         if !cur.isEmpty || !fields.isEmpty { endField(); records.append(fields) }
         return records
     }
 
+    /// Like parseCards, but also counts the non-empty lines that had no usable separator.
     static func parseCardsDetailed(_ text: String) -> (cards: [Card], skipped: Int) {
         var cards: [Card] = []
         var skipped = 0

@@ -74,7 +74,16 @@ struct DeckEditorView: View {
     let target: EditorTarget
 
     enum Mode: String, CaseIterable { case rows = "표", text = "텍스트" }
-    enum Field: Hashable { case category, name, key(UUID), value(UUID), note(UUID), text }
+    enum Field: Hashable {
+        case category, name, key(UUID), value(UUID), note(UUID), text
+        /// The card row the field sits in.
+        var row: UUID? {
+            switch self {
+            case .key(let id), .value(let id), .note(let id): return id
+            default: return nil
+            }
+        }
+    }
 
     @State private var name = ""
     @State private var category = ""
@@ -84,6 +93,9 @@ struct DeckEditorView: View {
     @State private var note = ""
     @State private var dirty = false
     @State private var warnedIncomplete = false
+    /// A row field to move to that may be far down the list, where its row is not built yet: the
+    /// list scrolls there first, then the field takes focus.
+    @State private var reveal: Field?
     @State private var confirmDelete = false
     @State private var confirmDiscard = false
     @State private var confirmClearRecord = false
@@ -143,7 +155,7 @@ struct DeckEditorView: View {
                         .textFieldStyle(.roundedBorder)
                         .focused($focus, equals: .name)
                         // Return after the name goes to the empty row at the end, where new cards are typed.
-                        .onSubmit { if let last = rows.rows.last { focus = .key(last.id) } }
+                        .onSubmit { if let last = rows.rows.last { reveal = .key(last.id) } }
                 }
             }
             VStack(alignment: .leading, spacing: 6) {
@@ -243,7 +255,8 @@ struct DeckEditorView: View {
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(spacing: 4) {
+                    // Lazy, so a long imported deck only builds the rows on screen.
+                    LazyVStack(spacing: 4) {
                         ForEach(Array(rows.rows.enumerated()), id: \.element.id) { i, row in
                             rowView(row, index: i)
                                 .id(row.id)
@@ -253,8 +266,16 @@ struct DeckEditorView: View {
                     .padding(.horizontal, 10)
                 }
                 .onChange(of: focus) {
-                    if case .key(let id) = focus { proxy.scrollTo(id) }
-                    if case .value(let id) = focus { proxy.scrollTo(id) }
+                    if let id = focus?.row { proxy.scrollTo(id) }
+                }
+                // A task rather than onChange, so a request made while the list was being built
+                // (opening the editor, switching back from text) is still carried out.
+                .task(id: reveal) {
+                    guard let field = reveal, let id = field.row else { return }
+                    proxy.scrollTo(id, anchor: .center)
+                    try? await Task.sleep(for: .milliseconds(30))
+                    focus = field
+                    reveal = nil
                 }
             }
         }
@@ -474,7 +495,7 @@ struct DeckEditorView: View {
         dirty = true
         note = "\(result.added)장을 붙여 넣었어요." + (result.skipped > 0 ? " 나눌 수 없는 \(result.skipped)줄은 건너뛰었어요." : "")
         if let next = result.next {
-            DispatchQueue.main.async { focus = .key(next) }
+            reveal = .key(next)
         }
     }
 
@@ -539,7 +560,7 @@ struct DeckEditorView: View {
         mode = next
         note = ""
         DispatchQueue.main.async {
-            focus = next == .text ? .text : .key(rows.rows[rows.rows.count - 1].id)
+            if next == .text { focus = .text } else { reveal = .key(rows.rows[rows.rows.count - 1].id) }
         }
     }
 
@@ -565,7 +586,7 @@ struct DeckEditorView: View {
             dirty = true
         }
         DispatchQueue.main.async {
-            focus = deckID == nil ? .name : .key(rows.rows[rows.rows.count - 1].id)
+            if deckID == nil { focus = .name } else { reveal = .key(rows.rows[rows.rows.count - 1].id) }
         }
     }
 
@@ -573,7 +594,7 @@ struct DeckEditorView: View {
         if mode == .rows, let row = rows.firstIncomplete, !warnedIncomplete {
             warnedIncomplete = true
             note = "키나 값이 빈 카드는 저장되지 않아요. 한 번 더 저장하면 빼고 저장합니다."
-            focus = row.q.trimmingCharacters(in: .whitespaces).isEmpty ? .key(row.id) : .value(row.id)
+            reveal = row.q.trimmingCharacters(in: .whitespaces).isEmpty ? .key(row.id) : .value(row.id)
             return
         }
         model.upsert(id: deckID, name: name, category: category, cards: currentCards)

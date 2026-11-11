@@ -3,10 +3,11 @@
 export const normalize = (s) => (s ?? '').normalize('NFC');
 export const chars = (s) => Array.from(s);
 
-const SEPARATORS = ['\t', ' = ', ' : ', '=', ':'];
+const SEPARATORS = ['\t', ' = ', ' : ', '=', ':', ' - ', ' – ', ' — '];
 
 /**
- * Parses "key = value" lines (tab, " = ", " : ", "=", ":" in that order of preference). Lines
+ * Parses "key = value" lines (tab, " = ", " : ", "=", ":", then a spaced dash " - " in that order
+ * of preference). Lines
  * starting with ">" right after a card are that card's note (메모); cards with a note come back
  * as [key, value, note].
  */
@@ -521,13 +522,15 @@ export function renameCategory(decks, order, from, to) {
 
 /**
  * Splits CSV text into records of fields. Quotes may wrap a field, "" is a literal quote, and a
- * quoted field may span lines (a long 메모 with line breaks).
+ * quoted field may span lines (a long 메모 with line breaks). A quote that is never closed is
+ * read as an ordinary character, so one typo does not swallow the rest of the file.
  */
 function csvRecords(text, sep) {
   const records = [];
   let fields = [];
   let cur = '';
   let quoted = false;
+  let opened = -1;
   const endField = () => { fields.push(cur.trim()); cur = ''; };
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
@@ -535,37 +538,81 @@ function csvRecords(text, sep) {
       if (ch === '"' && text[i + 1] === '"') { cur += '"'; i++; } else if (ch === '"') quoted = false; else cur += ch;
     } else if (ch === '"' && !cur.trim()) {
       quoted = true;
+      opened = i;
       cur = '';
     } else if (ch === sep) {
       endField();
-    } else if (ch === '\n' || ch === '\r') {
-      if (ch === '\r' && text[i + 1] === '\n') i++;
+    } else if (ch === '\n') {
       endField();
       records.push(fields);
       fields = [];
     } else cur += ch;
   }
+  if (quoted) return csvRecords(text.slice(0, opened) + text.slice(opened + 1), sep);
   if (cur || fields.length) { endField(); records.push(fields); }
   return records;
 }
 
 /**
+ * Turns the bytes of a picked file into text. Handles UTF-8 (with or without a BOM), UTF-16
+ * (Excel's "유니코드 텍스트") and CP949/EUC-KR (Excel's default CSV and old Notepad files in
+ * Korean Windows). Line endings come back as "\n". Returns null for a file that is not text.
+ */
+export function decodeText(bytes) {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let text;
+  if (b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) text = new TextDecoder('utf-8').decode(b.subarray(3));
+  else if (b[0] === 0xff && b[1] === 0xfe) text = new TextDecoder('utf-16le').decode(b.subarray(2));
+  else if (b[0] === 0xfe && b[1] === 0xff) text = new TextDecoder('utf-16be').decode(b.subarray(2));
+  else {
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(b);
+    } catch {
+      text = new TextDecoder('euc-kr').decode(b);
+    }
+  }
+  const odd = (text.match(/[\u0000-\u0008\u000e-\u001f\ufffd]/g) ?? []).length;
+  if (odd > text.length / 100) return null;
+  return text.replace(/\r\n?/g, '\n');
+}
+
+/** First rows like "단어, 뜻" or "term, definition" are column titles, not cards. */
+const HEADER_WORDS = new Set(['키', '값', '메모', '단어', '뜻', '의미', '질문', '답', '정답', '문제', '해설', '설명',
+  '예문', '영어', '한국어', '한글', '영단어', '용어', '연도', '사건', 'key', 'value', 'note', 'notes', 'memo', 'word',
+  'meaning', 'term', 'definition', 'question', 'answer', 'front', 'back', 'english', 'korean', 'example']);
+const isHeader = ([q, a]) => HEADER_WORDS.has(q.toLowerCase()) && HEADER_WORDS.has(a.toLowerCase());
+
+/** "1. ", "2) ", "• ", "- " and the like in front of a line copied from a list. */
+const LIST_MARKER = /^\s*(?:\d{1,3}[.)]|[-–—•·*▪●○◦])\s+/;
+
+/**
  * Reads cards from an imported file. CSV and TSV columns are key, value and 메모 (a comma inside
- * quotes stays in the value, so "지원하다, 신청하다" keeps both meanings); anything else uses
- * the same separators as pasting, with "> " lines as 메모.
+ * quotes stays in the value, so "지원하다, 신청하다" keeps both meanings); a .csv whose lines
+ * are split by tabs is read as TSV. Anything else uses the same separators as pasting, with
+ * "> " lines as 메모, after list numbers and bullets are dropped. A first row of column titles
+ * is left out.
  */
 export function parseImport(text, fileName = '') {
   const ext = (fileName.split('.').pop() ?? '').toLowerCase();
-  if (ext !== 'csv' && ext !== 'tsv') return parseCardsDetailed(text);
-  const sep = ext === 'tsv' ? '\t' : ',';
-  const cards = [];
-  let skipped = 0;
-  for (const fields of csvRecords((text ?? '').replace(/^\uFEFF/, ''), sep)) {
-    if (fields.every((f) => !f)) continue;
-    const [q = '', a = '', ...rest] = fields;
-    const note = rest.filter(Boolean).join('\n');
-    if (q && a) cards.push(note ? [q, a, note] : [q, a]);
-    else skipped++;
+  const body = (text ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  let result;
+  if (ext === 'csv' || ext === 'tsv') {
+    const first = body.split('\n').find((l) => l.trim()) ?? '';
+    const tabs = first.split('\t').length;
+    const sep = ext === 'tsv' || tabs > first.split(',').length ? '\t' : ',';
+    const cards = [];
+    let skipped = 0;
+    for (const fields of csvRecords(body, sep)) {
+      if (fields.every((f) => !f)) continue;
+      const [q = '', a = '', ...rest] = fields;
+      const note = rest.filter(Boolean).join('\n');
+      if (q && a) cards.push(note ? [q, a, note] : [q, a]);
+      else skipped++;
+    }
+    result = { cards, skipped };
+  } else {
+    result = parseCardsDetailed(body.split('\n').map((l) => l.replace(LIST_MARKER, '')).join('\n'));
   }
-  return { cards, skipped };
+  if (result.cards.length && isHeader(result.cards[0])) result.cards.shift();
+  return result;
 }

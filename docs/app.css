@@ -294,7 +294,7 @@ kbd {
 .card-rows-header small { font-weight: 500; opacity: 0.75; margin-left: 4px; }
 .card-rows-header { padding-top: 8px; padding-bottom: 6px; font-size: 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .card-rows-body { overflow-y: auto; max-height: min(52dvh, 460px); padding: 6px 0; }
-.card-row { padding-top: 3px; padding-bottom: 3px; }
+.card-row { padding-top: 3px; padding-bottom: 3px; content-visibility: auto; contain-intrinsic-size: auto 38px; }
 .col-divider { position: absolute; top: 0; bottom: 0; width: 11px; margin-left: -5.5px; cursor: col-resize; touch-action: none; z-index: 2; }
 .col-divider::after { content: ''; position: absolute; top: 0; bottom: 0; left: 5px; width: 1px; background: var(--line); transition: background 120ms, width 120ms; }
 .col-divider:hover::after, .col-divider.dragging::after, .col-divider:focus-visible::after { background: var(--accent); width: 2px; left: 4.5px; }
