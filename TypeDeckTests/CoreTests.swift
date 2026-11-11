@@ -200,25 +200,28 @@ struct MultipleMeaningTests {
         #expect(Core.TypingTarget("지원하다,신청하다").text == "지원하다, 신청하다")
     }
 
-    @Test func everyMeaningIsTypedAndTheCommaFillsIn() {
+    @Test func everyMeaningIsTypedAndTheCommaEndsOne() {
         let target = Core.TypingTarget("줄, 노선, 제품군")
-        #expect(Core.fillSeparators(target, typed: "줄", composing: false).shown == "줄, ")
-        #expect(Core.fillSeparators(target, typed: "줄", composing: true).shown == "줄")
-        #expect(Core.fillSeparators(target, typed: "줄노선", composing: false).shown == "줄, 노선, ")
-        #expect(Core.fillSeparators(target, typed: "줄, 노선", composing: false).shown == "줄, 노선, ")
-        #expect(Core.fillSeparators(target, typed: "줄,노선", composing: false).shown == "줄, 노선, ")
+        #expect(Core.fillSeparators(target, typed: "줄").shown == "줄", "nothing appears before the comma")
+        #expect(Core.fillSeparators(target, typed: "줄,").shown == "줄, ")
+        #expect(Core.fillSeparators(target, typed: "줄, ").shown == "줄, ")
+        #expect(Core.fillSeparators(target, typed: "줄,노선,").shown == "줄, 노선, ")
+        #expect(Core.fillSeparators(target, typed: "줄노선").shown == "줄노선")
+        #expect(Core.fillSeparators(target, typed: "줄노,").shown == "줄노,")
+        let plan = Core.TypingTarget("계획, 계획하다")
+        #expect(Core.fillSeparators(plan, typed: "계회기").shown == "계회기", "a wrong syllable does not reveal the length")
         let s = Session(cards: [Card("line", "줄, 노선, 제품군"), Card("hire", "고용하다")], shuffle: false)
         #expect(!s.input("줄", composing: false, at: 0), "the first meaning alone is not enough")
-        #expect(!s.input("줄노선", composing: false, at: 1))
+        #expect(!s.input("줄,노선,", composing: false, at: 1))
         #expect(!s.hadError)
-        #expect(s.input("줄노선제품군", composing: false, at: 2))
+        #expect(s.input("줄,노선,제품군", composing: false, at: 2))
         #expect(s.current?.q == "hire")
         #expect(s.streak == 1)
     }
 
     @Test func aWrongMeaningIsAnErrorAtItsOwnPlace() {
         let s = Session(cards: [Card("line", "줄, 노선")], shuffle: false)
-        s.input("줄노산", composing: false, at: 0)
+        s.input("줄,노산", composing: false, at: 0)
         #expect(s.shown == "줄, 노산")
         #expect(s.hadError)
         #expect(Core.diff(answer: s.current!.a, typed: s.shown, composing: false).map(\.state) == [.ok, .ok, .ok, .ok, .bad])
@@ -226,7 +229,7 @@ struct MultipleMeaningTests {
 
     @Test func pastedTextCarriesOverToTheNextCards() {
         let s = Session(cards: [Card("a", "가, 나"), Card("b", "다"), Card("c", "라")], shuffle: false)
-        let r = s.feed("가나다라", composing: false, at: 0)
+        let r = s.feed("가,나다라", composing: false, at: 0)
         #expect(r.advanced == 3)
         #expect(s.finished)
     }

@@ -179,25 +179,28 @@ test('meanings split on commas but keep numbers like 1,000', () => {
   assert.equal(typingTarget('지원하다,신청하다').text, '지원하다, 신청하다');
 });
 
-test('every meaning is typed; the ", " between them fills in by itself', () => {
+test('every meaning is typed; the comma ends one and its space fills in', () => {
   const target = typingTarget('줄, 노선, 제품군');
-  assert.deepEqual(fillSeparators(target, '줄', false).shown, '줄, ');
-  assert.deepEqual(fillSeparators(target, '줄', true).shown, '줄', 'not while the syllable is still being composed');
-  assert.deepEqual(fillSeparators(target, '줄노선', false).shown, '줄, 노선, ');
-  assert.deepEqual(fillSeparators(target, '줄, 노선', false).shown, '줄, 노선, ', 'typing the comma yourself also works');
-  assert.deepEqual(fillSeparators(target, '줄,노선', false).shown, '줄, 노선, ');
+  assert.equal(fillSeparators(target, '줄').shown, '줄', 'nothing appears before the comma');
+  assert.equal(fillSeparators(target, '줄,').shown, '줄, ');
+  assert.equal(fillSeparators(target, '줄, ').shown, '줄, ', 'typing the space yourself also works');
+  assert.equal(fillSeparators(target, '줄,노선,').shown, '줄, 노선, ');
+  assert.equal(fillSeparators(target, '줄노선').shown, '줄노선', 'no comma, no separator');
+  assert.equal(fillSeparators(target, '줄노,').shown, '줄노,', 'a comma in the wrong place gets no space');
+  const plan = typingTarget('계획, 계획하다');
+  assert.equal(fillSeparators(plan, '계회기').shown, '계회기', 'a wrong syllable does not reveal the length');
   const s = new Session([['line', '줄, 노선, 제품군'], ['hire', '고용하다']], { shuffle: false });
   assert.equal(s.input('줄', false, 0), 'none', 'the first meaning alone is not enough');
-  assert.equal(s.input('줄노선', false, 1), 'none');
+  assert.equal(s.input('줄,노선,', false, 1), 'none');
   assert.equal(s.hadError, false);
-  assert.equal(s.input('줄노선제품군', false, 2), 'advance');
+  assert.equal(s.input('줄,노선,제품군', false, 2), 'advance');
   assert.equal(s.current.q, 'hire');
   assert.equal(s.streak, 1);
 });
 
 test('a wrong meaning is an error at its own place', () => {
   const s = new Session([['line', '줄, 노선']], { shuffle: false });
-  s.input('줄노산', false, 0);
+  s.input('줄,노산', false, 0);
   assert.equal(s.shown, '줄, 노산');
   assert.equal(s.hadError, true);
   assert.deepEqual(diff(s.current.a, s.shown, false).map((d) => d.state), ['ok', 'ok', 'ok', 'ok', 'bad']);
@@ -211,7 +214,7 @@ test('reverse shows all meanings and asks for the word', () => {
 
 test('pasted text carries over to the next cards', () => {
   const s = new Session([['a', '가, 나'], ['b', '다'], ['c', '라']], { shuffle: false });
-  assert.deepEqual(s.feed('가나다라', false, 0), { advanced: 3, rest: '' });
+  assert.deepEqual(s.feed('가,나다라', false, 0), { advanced: 3, rest: '' });
   assert.equal(s.finished, true);
 });
 

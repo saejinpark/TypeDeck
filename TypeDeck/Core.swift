@@ -390,10 +390,11 @@ enum Core {
         return clean.count > 1 ? clean : [s]
     }
 
-    /// What is typed for an answer: its meanings joined by ", ", and where those separators sit.
+    /// What is typed for an answer: its meanings joined by ", ", and where the space of each ", "
+    /// sits (it fills in once the comma is typed).
     struct TypingTarget: Equatable {
         let text: String
-        /// Character positions of the ", " between meanings, which fill in by themselves.
+        /// Character positions of the space after each separating comma.
         let auto: Set<Int>
 
         init(_ answer: String) {
@@ -402,30 +403,32 @@ enum Core {
             var at = 0
             for (k, p) in parts.enumerated() {
                 at += p.count
-                if k < parts.count - 1 { auto.insert(at); auto.insert(at + 1); at += 2 }
+                if k < parts.count - 1 { auto.insert(at + 1); at += 2 }
             }
             text = parts.joined(separator: ", ")
             self.auto = auto
         }
     }
 
-    /// Lines the typed text up with the target and fills in the ", " between meanings, which the
-    /// user does not have to type (typing it is fine too). Returns the text as it reads on the
+    /// Lines the typed text up with the target. The user ends a meaning by typing the comma, and
+    /// the space after it fills in (typing it is fine too). Nothing is filled in before the comma,
+    /// so the card never gives away where a meaning ends. Returns the text as it reads on the
     /// card, and how many typed characters spelled out the whole target (nil until they do).
-    static func fillSeparators(_ target: TypingTarget, typed: String, composing: Bool) -> (shown: String, used: Int?) {
+    static func fillSeparators(_ target: TypingTarget, typed: String) -> (shown: String, used: Int?) {
         let t = Array(target.text)
         let u = Array(typed)
         var shown = ""
         var i = 0
         var used: Int?
         for (j, ch) in u.enumerated() {
-            while i < t.count && target.auto.contains(i) && ch != t[i] { shown.append(t[i]); i += 1 }
             shown.append(ch)
             i += 1
+            if ch == ",", target.auto.contains(i), j + 1 >= u.count || u[j + 1] != " " {
+                shown.append(" ")
+                i += 1
+            }
             if used == nil && i == t.count && shown == target.text { used = j + 1 }
         }
-        // A meaning that is finished moves the caret past the ", " right away.
-        if !composing { while i < t.count && target.auto.contains(i) { shown.append(t[i]); i += 1 } }
         return (shown, used)
     }
 
@@ -531,7 +534,7 @@ final class Session {
         guard let card = current else { return false }
         typed = Core.normalize(text)
         self.composing = composing
-        shown = Core.fillSeparators(card.target, typed: typed, composing: composing).shown
+        shown = Core.fillSeparators(card.target, typed: typed).shown
         if !typed.isEmpty && cardStart == nil { cardStart = now }
         if shown == card.a {
             complete(at: now)
@@ -549,7 +552,7 @@ final class Session {
         var t = Core.normalize(text)
         var advanced = 0
         while let card = current, !composing,
-              let used = Core.fillSeparators(card.target, typed: t, composing: false).used, used < t.count {
+              let used = Core.fillSeparators(card.target, typed: t).used, used < t.count {
             if cardStart == nil { cardStart = now }
             complete(at: now)
             advanced += 1

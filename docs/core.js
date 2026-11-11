@@ -81,37 +81,39 @@ export function meanings(answer) {
   return parts.length > 1 ? parts : [s];
 }
 
-/** What is typed for an answer: its meanings joined by ", ", and where those separators sit. */
+/**
+ * What is typed for an answer: its meanings joined by ", ", and where the space of each ", "
+ * sits (it fills in once the comma is typed).
+ */
 export function typingTarget(answer) {
   const parts = meanings(answer);
   const auto = new Set();
   let at = 0;
   parts.forEach((p, k) => {
     at += chars(p).length;
-    if (k < parts.length - 1) { auto.add(at); auto.add(at + 1); at += 2; }
+    if (k < parts.length - 1) { auto.add(at + 1); at += 2; }
   });
   return { text: parts.join(', '), auto };
 }
 
 /**
- * Lines the typed text up with the target and fills in the ", " between meanings, which the user
- * does not have to type (typing it is fine too). Returns the text as it reads on the card, and
- * how many typed characters spelled out the whole target (-1 until they do).
+ * Lines the typed text up with the target. The user ends a meaning by typing the comma, and the
+ * space after it fills in (typing it is fine too). Nothing is filled in before the comma, so the
+ * card never gives away where a meaning ends. Returns the text as it reads on the card, and how
+ * many typed characters spelled out the whole target (-1 until they do).
  */
-export function fillSeparators(target, typed, composing) {
+export function fillSeparators(target, typed) {
   const t = chars(target.text);
   const u = chars(typed);
   let shown = '';
   let i = 0;
   let used = -1;
   for (let j = 0; j < u.length; j++) {
-    while (i < t.length && target.auto.has(i) && u[j] !== t[i]) shown += t[i++];
     shown += u[j];
     i++;
+    if (u[j] === ',' && target.auto.has(i) && u[j + 1] !== ' ') { shown += ' '; i++; }
     if (used < 0 && i === t.length && shown === target.text) used = j + 1;
   }
-  // A meaning that is finished moves the caret past the ", " right away.
-  if (!composing) while (i < t.length && target.auto.has(i)) shown += t[i++];
   return { shown, used };
 }
 
@@ -174,7 +176,7 @@ export class Session {
     if (!card) return 'none';
     this.typed = normalize(text);
     this.composing = composing;
-    this.shown = fillSeparators(card.target, this.typed, composing).shown;
+    this.shown = fillSeparators(card.target, this.typed).shown;
     if (this.typed && this.cardStart === null) this.cardStart = now;
     if (this.shown === card.a) {
       this.complete(now);
@@ -194,7 +196,7 @@ export class Session {
     let t = normalize(text);
     let advanced = 0;
     while (!this.finished && !composing) {
-      const { used } = fillSeparators(this.current.target, t, false);
+      const { used } = fillSeparators(this.current.target, t);
       if (used < 0 || used >= chars(t).length) break;
       if (this.cardStart === null) this.cardStart = now;
       this.complete(now);
