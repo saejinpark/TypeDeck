@@ -4,7 +4,7 @@
 
 자격증 용어, 외국어 단어, 시험 범위처럼 외울 것이면 무엇이든 씁니다. 공부할 주제마다 **카테고리**를 만들고, 그 안에 외울 것을 **덱**으로 정리합니다.
 
-- 웹: `docs/` 폴더 (GitHub Pages)
+- 웹: <https://saejinpark.github.io/TypeDeck/> (`docs/` 폴더를 GitHub Pages로 배포)
 - 맥: `TypeDeck.xcodeproj` (macOS 15 이상)
 
 > [!WARNING]
